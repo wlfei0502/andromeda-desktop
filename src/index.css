@@ -171,3 +171,96 @@
     animation: none;
   }
 }
+
+.md-content {
+  @apply text-sm leading-relaxed text-foreground;
+}
+
+.md-content > :first-child {
+  @apply mt-0;
+}
+
+.md-content > :last-child {
+  @apply mb-0;
+}
+
+.md-content p {
+  @apply my-2;
+}
+
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4 {
+  @apply mt-3 mb-1.5 font-semibold tracking-tight text-foreground;
+}
+
+.md-content h1 {
+  @apply text-lg;
+}
+
+.md-content h2 {
+  @apply text-base;
+}
+
+.md-content h3,
+.md-content h4 {
+  @apply text-sm;
+}
+
+.md-content ul {
+  @apply my-2 list-disc space-y-1 pl-5;
+}
+
+.md-content ol {
+  @apply my-2 list-decimal space-y-1 pl-5;
+}
+
+.md-content li {
+  @apply leading-relaxed;
+}
+
+.md-content blockquote {
+  @apply my-2 border-l-2 border-primary/40 pl-3 text-muted-foreground;
+}
+
+.md-content a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+
+.md-content hr {
+  @apply my-3 border-border;
+}
+
+.md-content table {
+  @apply my-2 w-full border-collapse overflow-hidden text-left text-xs;
+}
+
+.md-content th,
+.md-content td {
+  @apply border border-border/80 px-2 py-1.5;
+}
+
+.md-content th {
+  @apply bg-muted/60 font-medium;
+}
+
+.md-content pre {
+  @apply my-2 overflow-x-auto rounded-xl bg-foreground/[0.06] p-3 text-[12px] leading-relaxed;
+}
+
+.md-content pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+
+.md-content .md-inline-code {
+  @apply rounded-md bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-[12px];
+}
+
+.md-content strong {
+  @apply font-semibold text-foreground;
+}
+
+.md-content em {
+  @apply italic;
+}

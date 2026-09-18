@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { MarkdownContent } from "./markdown-content";
 import type { ChatMessage } from "./types";
 
 type ChatMessageListProps = {
@@ -33,7 +34,11 @@ export function ChatMessageList({ messages }: ChatMessageListProps) {
                   Andromeda
                 </p>
               ) : null}
-              <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              {isUser ? (
+                <p className="whitespace-pre-wrap break-words">{message.content}</p>
+              ) : (
+                <MarkdownContent content={message.content} />
+              )}
             </div>
           </div>
         );

@@ -37,7 +37,10 @@ impl DesktopConfig {
         Self::from_toml(text)
     }
 
-    /// Load from disk. Search order: `CWD/config.toml`, then `exe_dir/config.toml`.
+    /// Load from disk.
+    /// Search order: `CWD/config.toml`, `CWD/../config.toml` (repo root when cwd is
+    /// `src-tauri`), then `exe_dir/config.toml`, then repo root inferred from
+    /// `exe` under `src-tauri/target/<profile>/`.
     /// Missing file → default URL with a stderr hint.
     pub fn load() -> Result<Self, String> {
         let candidates = config_candidates();
@@ -65,16 +68,36 @@ impl DesktopConfig {
     }
 }
 
+fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
 fn config_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+
     if let Ok(cwd) = std::env::current_dir() {
-        paths.push(cwd.join("config.toml"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("config.toml"));
+        push_unique(&mut paths, cwd.join("config.toml"));
+        if let Some(parent) = cwd.parent() {
+            push_unique(&mut paths, parent.join("config.toml"));
         }
     }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_unique(&mut paths, dir.join("config.toml"));
+            // `src-tauri/target/<profile>/app.exe` → repo root
+            if let Some(repo) = dir
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+            {
+                push_unique(&mut paths, repo.join("config.toml"));
+            }
+        }
+    }
+
     paths
 }
 
