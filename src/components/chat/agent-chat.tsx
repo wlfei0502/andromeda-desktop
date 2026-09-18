@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   isCloudSseEvent,
+  shouldIgnoreSseForRun,
   type WireChatMessage,
 } from "@/lib/cloud-events";
 import { cn } from "@/lib/utils";
@@ -88,6 +89,7 @@ export function AgentChat() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const activeRunIdRef = useRef<string | null>(null);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isReplying;
@@ -103,9 +105,11 @@ export function AgentChat() {
     void listen<unknown>("agent://sse", (event) => {
       const payload = event.payload;
       if (!isCloudSseEvent(payload)) return;
+      if (shouldIgnoreSseForRun(activeRunIdRef.current, payload)) return;
 
       switch (payload.type) {
         case "run.started":
+          activeRunIdRef.current = payload.run_id;
           break;
         case "message.delta":
           setMessages((prev) =>
@@ -123,6 +127,9 @@ export function AgentChat() {
           );
           break;
         case "run.finished":
+          if (activeRunIdRef.current === payload.run_id) {
+            activeRunIdRef.current = null;
+          }
           setIsReplying(false);
           textareaRef.current?.focus();
           break;
@@ -165,9 +172,12 @@ export function AgentChat() {
     setIsReplying(true);
 
     try {
-      await invoke<{ run_id: string }>("start_run", {
+      const { run_id } = await invoke<{ run_id: string }>("start_run", {
         messages: toWireMessages(nextMessages),
       });
+      if (run_id) {
+        activeRunIdRef.current = run_id;
+      }
     } catch (err) {
       const message =
         err instanceof Error

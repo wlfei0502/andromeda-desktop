@@ -32,3 +32,18 @@ export function isCloudSseEvent(value: unknown): value is CloudSseEvent {
     type === "error"
   );
 }
+
+/** Ignore stale runs; setup errors may omit run_id. */
+export function shouldIgnoreSseForRun(
+  activeRunId: string | null,
+  event: CloudSseEvent,
+): boolean {
+  const runId = event.run_id;
+  if (event.type === "error" && runId === "") {
+    return false;
+  }
+  if (activeRunId && runId && runId !== activeRunId) {
+    return true;
+  }
+  return false;
+}
