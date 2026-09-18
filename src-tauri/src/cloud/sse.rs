@@ -17,6 +17,17 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+fn is_known_sse_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "run.started"
+            | "message.delta"
+            | "message.completed"
+            | "run.finished"
+            | "error"
+    )
+}
+
 /// Parse one complete SSE event block (may end with a blank line).
 ///
 /// Returns `Ok(None)` for `tool.request` and unrecognized `type` values so the
@@ -61,11 +72,9 @@ pub fn parse_sse_block(block: &str) -> Result<Option<SseEvent>, ParseError> {
     match serde_json::from_value::<SseEvent>(value) {
         Ok(ev) => Ok(Some(ev)),
         Err(e) => {
-            if type_name.is_empty() {
+            if type_name.is_empty() || is_known_sse_type(&type_name) {
                 Err(ParseError::InvalidJson(e.to_string()))
             } else {
-                // Unknown / unmapped type — do not fail the stream
-                let _ = e;
                 Ok(None)
             }
         }
@@ -163,6 +172,15 @@ mod tests {
         let block = "data: {\"type\":\"tool.request\",\"run_id\":\"r1\",\"tool_call_id\":\"t1\",\"name\":\"shell\",\"arguments\":{}}\n\n";
         let ev = parse_sse_block(block).unwrap();
         assert!(ev.is_none());
+    }
+
+    #[test]
+    fn incomplete_message_delta_returns_invalid_json() {
+        let block = "data: {\"type\":\"message.delta\",\"run_id\":\"r1\"}\n\n";
+        assert!(matches!(
+            parse_sse_block(block),
+            Err(ParseError::InvalidJson(_))
+        ));
     }
 
     #[test]
