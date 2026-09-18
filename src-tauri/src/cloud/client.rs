@@ -101,9 +101,61 @@ pub async fn start_run(
     Ok(StartRunResponse { run_id })
 }
 
+/// Accumulates SSE byte chunks and yields complete lines without splitting UTF-8.
+#[derive(Debug, Default)]
+struct SseUtf8LineBuffer {
+    buf: Vec<u8>,
+}
+
+impl SseUtf8LineBuffer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append `chunk`; return every complete line (without trailing `\n`).
+    /// Incomplete UTF-8 sequences stay buffered until later chunks arrive.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buf.extend_from_slice(chunk);
+        let mut lines = Vec::new();
+        loop {
+            let (valid_len, skip_invalid) = match std::str::from_utf8(&self.buf) {
+                Ok(_) => (self.buf.len(), None),
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    match e.error_len() {
+                        None => (valid, None), // incomplete trailing sequence
+                        Some(n) => (valid, Some(n)),
+                    }
+                }
+            };
+
+            if valid_len > 0 {
+                let text = std::str::from_utf8(&self.buf[..valid_len]).expect("valid_up_to");
+                if let Some(nl) = text.find('\n') {
+                    let line = text[..nl].to_string();
+                    self.buf.drain(..nl + 1);
+                    lines.push(line);
+                    continue;
+                }
+            }
+
+            if let Some(n) = skip_invalid {
+                let start = valid_len;
+                let end = (start + n).min(self.buf.len());
+                if start < end {
+                    self.buf.drain(start..end);
+                    continue;
+                }
+            }
+            break;
+        }
+        lines
+    }
+}
+
 async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: String) {
     let mut state = SseParseState::new();
-    let mut pending = String::new();
+    let mut line_buf = SseUtf8LineBuffer::new();
     let mut stream = resp.bytes_stream();
 
     while let Some(item) = stream.next().await {
@@ -115,10 +167,7 @@ async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: Str
             }
         };
 
-        pending.push_str(&String::from_utf8_lossy(&bytes));
-        while let Some(idx) = pending.find('\n') {
-            let line: String = pending[..idx].to_string();
-            pending.drain(..=idx);
+        for line in line_buf.push(&bytes) {
             handle_sse_line(&app, &mut state, &line);
         }
     }
@@ -181,4 +230,25 @@ pub async fn cancel_run(run_id: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SseUtf8LineBuffer;
+
+    #[test]
+    fn utf8_line_buffer_splits_chinese_across_chunks() {
+        let mut buf = SseUtf8LineBuffer::new();
+        let bytes = "你好\n".as_bytes();
+        // "你" is E4 BD A0 — split after 2 bytes so the first chunk is incomplete UTF-8.
+        assert!(buf.push(&bytes[..2]).is_empty());
+        assert_eq!(buf.push(&bytes[2..]), vec!["你好".to_string()]);
+    }
+
+    #[test]
+    fn utf8_line_buffer_holds_partial_line() {
+        let mut buf = SseUtf8LineBuffer::new();
+        assert!(buf.push(b"data: hello").is_empty());
+        assert_eq!(buf.push(b" world\n"), vec!["data: hello world".to_string()]);
+    }
 }
