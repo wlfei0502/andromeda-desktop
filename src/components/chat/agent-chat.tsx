@@ -1,20 +1,91 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { ArrowUp, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  isCloudSseEvent,
+  type WireChatMessage,
+} from "@/lib/cloud-events";
 import { cn } from "@/lib/utils";
 import { ChatMessageList } from "./chat-message-list";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ChatRole } from "./types";
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function toWireMessages(messages: ChatMessage[]): WireChatMessage[] {
+  return messages.map((m) => ({ role: m.role, content: m.content }));
+}
+
+function applyDelta(
+  messages: ChatMessage[],
+  messageId: string,
+  delta: string,
+): ChatMessage[] {
+  const index = messages.findIndex(
+    (m) => m.serverMessageId === messageId || m.id === messageId,
+  );
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        serverMessageId: messageId,
+        role: "assistant",
+        content: delta,
+      },
+    ];
+  }
+  const next = [...messages];
+  const existing = next[index];
+  next[index] = {
+    ...existing,
+    serverMessageId: messageId,
+    content: existing.content + delta,
+  };
+  return next;
+}
+
+function applyCompleted(
+  messages: ChatMessage[],
+  messageId: string,
+  role: string,
+  content: string,
+): ChatMessage[] {
+  const chatRole: ChatRole = role === "user" ? "user" : "assistant";
+  const index = messages.findIndex(
+    (m) => m.serverMessageId === messageId || m.id === messageId,
+  );
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        serverMessageId: messageId,
+        role: chatRole,
+        content,
+      },
+    ];
+  }
+  const next = [...messages];
+  next[index] = {
+    ...next[index],
+    serverMessageId: messageId,
+    role: chatRole,
+    content,
+  };
+  return next;
 }
 
 export function AgentChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [isReplying, setIsReplying] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -23,7 +94,59 @@ export function AgentChat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isReplying]);
+  }, [messages, isReplying, replyError]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<unknown>("agent://sse", (event) => {
+      const payload = event.payload;
+      if (!isCloudSseEvent(payload)) return;
+
+      switch (payload.type) {
+        case "run.started":
+          break;
+        case "message.delta":
+          setMessages((prev) =>
+            applyDelta(prev, payload.message_id, payload.delta),
+          );
+          break;
+        case "message.completed":
+          setMessages((prev) =>
+            applyCompleted(
+              prev,
+              payload.message_id,
+              payload.role,
+              payload.content,
+            ),
+          );
+          break;
+        case "run.finished":
+          setIsReplying(false);
+          textareaRef.current?.focus();
+          break;
+        case "error":
+          setIsReplying(false);
+          setReplyError(payload.message || "请求失败");
+          textareaRef.current?.focus();
+          break;
+        default:
+          break;
+      }
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   async function sendMessage(content: string) {
     const trimmed = content.trim();
@@ -35,21 +158,27 @@ export function AgentChat() {
       content: trimmed,
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
     setDraft("");
+    setReplyError(null);
     setIsReplying(true);
 
-    window.setTimeout(() => {
-      const reply: ChatMessage = {
-        id: createId(),
-        role: "assistant",
-        content:
-          "已收到。智能体能力稍后接入，现在可以先在这里整理想法与指令。",
-      };
-      setMessages((prev) => [...prev, reply]);
+    try {
+      await invoke<{ run_id: string }>("start_run", {
+        messages: toWireMessages(nextMessages),
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "启动对话失败";
       setIsReplying(false);
+      setReplyError(message);
       textareaRef.current?.focus();
-    }, 650);
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -93,6 +222,14 @@ export function AgentChat() {
                   正在思考…
                 </p>
               ) : null}
+              {replyError ? (
+                <p
+                  role="alert"
+                  className="animate-fade-rise px-1 py-2 text-xs text-destructive"
+                >
+                  {replyError}
+                </p>
+              ) : null}
               <div ref={bottomRef} />
             </ScrollArea>
           </section>
@@ -105,6 +242,11 @@ export function AgentChat() {
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                 在下方输入指令或问题，开始与智能体对话。
               </p>
+              {replyError ? (
+                <p role="alert" className="mt-3 text-xs text-destructive">
+                  {replyError}
+                </p>
+              ) : null}
             </div>
           </section>
         )}
