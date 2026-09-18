@@ -1,0 +1,151 @@
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ArrowUp, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+import { ChatMessageList } from "./chat-message-list";
+import type { ChatMessage } from "./types";
+
+function createId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function AgentChat() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [isReplying, setIsReplying] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const hasMessages = messages.length > 0;
+  const canSend = draft.trim().length > 0 && !isReplying;
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, isReplying]);
+
+  async function sendMessage(content: string) {
+    const trimmed = content.trim();
+    if (!trimmed || isReplying) return;
+
+    const userMessage: ChatMessage = {
+      id: createId(),
+      role: "user",
+      content: trimmed,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setDraft("");
+    setIsReplying(true);
+
+    window.setTimeout(() => {
+      const reply: ChatMessage = {
+        id: createId(),
+        role: "assistant",
+        content:
+          "已收到。智能体能力稍后接入，现在可以先在这里整理想法与指令。",
+      };
+      setMessages((prev) => [...prev, reply]);
+      setIsReplying(false);
+      textareaRef.current?.focus();
+    }, 650);
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(draft);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void sendMessage(draft);
+    }
+  }
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10"
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,oklch(0.94_0.04_185)_0%,transparent_55%),radial-gradient(ellipse_at_bottom,oklch(0.95_0.03_220)_0%,transparent_50%)]" />
+        <div className="animate-soft-pulse absolute left-1/2 top-[18%] h-40 w-40 -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
+      </div>
+
+      <header className="flex shrink-0 items-center justify-center px-6 pt-6">
+        <div className="animate-fade-rise flex items-center gap-2 text-foreground/80">
+          <Sparkles className="size-4 text-primary" aria-hidden />
+          <span className="font-heading text-lg font-semibold tracking-tight">
+            Andromeda
+          </span>
+        </div>
+      </header>
+
+      <main className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col px-4 pb-8 pt-2">
+        {hasMessages ? (
+          <section className="min-h-0 flex-1 overflow-hidden pb-3">
+            <ScrollArea className="h-full pr-2">
+              <ChatMessageList messages={messages} />
+              {isReplying ? (
+                <p className="animate-fade-rise px-1 py-2 text-xs text-muted-foreground">
+                  正在思考…
+                </p>
+              ) : null}
+              <div ref={bottomRef} />
+            </ScrollArea>
+          </section>
+        ) : (
+          <section className="flex min-h-0 flex-1 flex-col items-center justify-end pb-6">
+            <div className="animate-fade-rise mx-auto mb-6 max-w-md text-center">
+              <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
+                有什么可以帮你？
+              </h1>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                在下方输入指令或问题，开始与智能体对话。
+              </p>
+            </div>
+          </section>
+        )}
+
+        <form
+          onSubmit={handleSubmit}
+          className={cn(
+            "animate-fade-rise w-full",
+            hasMessages ? "mt-auto" : "mb-[12vh]",
+          )}
+          style={{ animationDelay: "80ms" }}
+        >
+          <div className="rounded-3xl border border-border/80 bg-card/90 p-2 shadow-[0_10px_40px_-20px_oklch(0.45_0.05_210_/_0.35)] backdrop-blur-md transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.5_0.07_185_/_0.4)]">
+            <Textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="问 Andromeda 任何事情…"
+              rows={1}
+              disabled={isReplying}
+              aria-label="智能体消息输入"
+              className="min-h-12 border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
+            />
+            <div className="flex items-center justify-between gap-3 px-1.5 pb-1 pt-0.5">
+              <p className="text-[11px] text-muted-foreground">
+                Enter 发送 · Shift+Enter 换行
+              </p>
+              <Button
+                type="submit"
+                size="icon-sm"
+                disabled={!canSend}
+                aria-label="发送消息"
+                className="rounded-2xl"
+              >
+                <ArrowUp data-icon="inline-start" />
+              </Button>
+            </div>
+          </div>
+        </form>
+      </main>
+    </div>
+  );
+}
