@@ -10,6 +10,13 @@ pub enum Role {
     Tool,
 }
 
+/// Minimal chat message for `start_run` (role + content).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatWireMessage {
+    pub role: Role,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolCallWire {
     pub id: String,
