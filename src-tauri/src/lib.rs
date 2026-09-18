@@ -1,5 +1,7 @@
+mod cloud;
 mod config;
 
+pub use cloud::{parse_sse_block, push_sse_line, ParseError, SseEvent, SseParseState};
 pub use config::DesktopConfig;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
