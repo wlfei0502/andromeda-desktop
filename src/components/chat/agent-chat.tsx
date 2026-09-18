@@ -90,6 +90,7 @@ export function AgentChat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  const runEndedRef = useRef(false);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isReplying;
@@ -127,13 +128,25 @@ export function AgentChat() {
           );
           break;
         case "run.finished":
-          if (activeRunIdRef.current === payload.run_id) {
+          if (
+            activeRunIdRef.current === null ||
+            activeRunIdRef.current === payload.run_id
+          ) {
             activeRunIdRef.current = null;
           }
+          runEndedRef.current = true;
           setIsReplying(false);
           textareaRef.current?.focus();
           break;
         case "error":
+          if (
+            activeRunIdRef.current === null ||
+            !payload.run_id ||
+            activeRunIdRef.current === payload.run_id
+          ) {
+            activeRunIdRef.current = null;
+          }
+          runEndedRef.current = true;
           setIsReplying(false);
           setReplyError(payload.message || "请求失败");
           textareaRef.current?.focus();
@@ -170,15 +183,22 @@ export function AgentChat() {
     setDraft("");
     setReplyError(null);
     setIsReplying(true);
+    // Clear before invoke so early SSE from the new run is not filtered
+    // against a stale id left by a prior error path.
+    activeRunIdRef.current = null;
+    runEndedRef.current = false;
 
     try {
       const { run_id } = await invoke<{ run_id: string }>("start_run", {
         messages: toWireMessages(nextMessages),
       });
-      if (run_id) {
+      // Do not re-arm after finished/error that raced ahead of invoke return.
+      if (run_id && !runEndedRef.current) {
         activeRunIdRef.current = run_id;
       }
     } catch (err) {
+      activeRunIdRef.current = null;
+      runEndedRef.current = true;
       const message =
         err instanceof Error
           ? err.message

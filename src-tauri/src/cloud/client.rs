@@ -153,10 +153,15 @@ impl SseUtf8LineBuffer {
     }
 }
 
+fn is_terminal_sse_event(event: &SseEvent) -> bool {
+    matches!(event, SseEvent::RunFinished { .. } | SseEvent::Error { .. })
+}
+
 async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: String) {
     let mut state = SseParseState::new();
     let mut line_buf = SseUtf8LineBuffer::new();
     let mut stream = resp.bytes_stream();
+    let mut saw_terminal = false;
 
     while let Some(item) = stream.next().await {
         let bytes = match item {
@@ -168,36 +173,60 @@ async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: Str
         };
 
         for line in line_buf.push(&bytes) {
-            handle_sse_line(&app, &mut state, &line);
+            if handle_sse_line(&app, &mut state, &line, &run_id) {
+                saw_terminal = true;
+            }
         }
     }
 
     // Flush a trailing block if the stream closed without a final blank line.
     if let Some(block) = push_sse_line(&mut state, "") {
-        handle_sse_block(&app, &block);
+        if handle_sse_block(&app, &block, &run_id) {
+            saw_terminal = true;
+        }
+    }
+
+    if !saw_terminal {
+        emit_error(
+            &app,
+            &run_id,
+            "SSE stream ended without run.finished or error",
+        );
     }
 }
 
-fn handle_sse_line(app: &AppHandle, state: &mut SseParseState, line: &str) {
+/// Returns true if a terminal event (`run.finished` / `error`) was emitted.
+fn handle_sse_line(
+    app: &AppHandle,
+    state: &mut SseParseState,
+    line: &str,
+    run_id: &str,
+) -> bool {
     if let Some(block) = push_sse_line(state, line) {
-        handle_sse_block(app, &block);
+        return handle_sse_block(app, &block, run_id);
     }
+    false
 }
 
-fn handle_sse_block(app: &AppHandle, block: &str) {
+/// Returns true if a terminal event (`run.finished` / `error`) was emitted.
+fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str) -> bool {
     match parse_sse_block(block) {
         Ok(Some(event)) => {
             if matches!(event, SseEvent::ToolRequest { .. }) {
                 eprintln!("warn: ignoring tool.request (v1 has no local tools)");
-                return;
+                return false;
             }
+            let terminal = is_terminal_sse_event(&event);
             emit_sse(app, &event);
+            terminal
         }
         Ok(None) => {
             eprintln!("warn: ignored SSE block (tool.request or unknown type)");
+            false
         }
         Err(e) => {
-            emit_error(app, "", format!("SSE parse error: {e}"));
+            emit_error(app, run_id, format!("SSE parse error: {e}"));
+            true
         }
     }
 }
