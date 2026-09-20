@@ -1,9 +1,9 @@
-import { AgentChat } from "@/components/chat/agent-chat";
+import { AppShell } from "@/components/layout/app-shell";
 
 export default function App() {
   return (
     <div className="h-full min-h-0">
-      <AgentChat />
+      <AppShell />
     </div>
   );
 }

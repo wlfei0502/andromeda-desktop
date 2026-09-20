@@ -1,7 +1,21 @@
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+export type TodoItem = {
+  id: string;
+  content: string;
+  status: TodoStatus;
+};
+
 export type CloudSseEvent =
   | { type: "run.started"; run_id: string }
   | {
       type: "message.delta";
+      run_id: string;
+      message_id: string;
+      delta: string;
+    }
+  | {
+      type: "reasoning.delta";
       run_id: string;
       message_id: string;
       delta: string;
@@ -12,7 +26,9 @@ export type CloudSseEvent =
       message_id: string;
       role: string;
       content: string;
+      reasoning_content?: string | null;
     }
+  | { type: "todos.updated"; run_id: string; todos: TodoItem[] }
   | { type: "run.finished"; run_id: string; reason: string }
   | { type: "error"; run_id: string; message: string; code?: string };
 
@@ -27,7 +43,9 @@ export function isCloudSseEvent(value: unknown): value is CloudSseEvent {
   return (
     type === "run.started" ||
     type === "message.delta" ||
+    type === "reasoning.delta" ||
     type === "message.completed" ||
+    type === "todos.updated" ||
     type === "run.finished" ||
     type === "error"
   );

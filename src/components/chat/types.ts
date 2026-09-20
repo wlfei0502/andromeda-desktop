@@ -4,6 +4,10 @@ export type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
+  /** Model thinking / reasoning text (shown above body). */
+  reasoning?: string;
+  /** True while reasoning is still streaming. */
+  reasoningStreaming?: boolean;
   /** Cloud `message_id` when this bubble tracks a streaming assistant reply. */
   serverMessageId?: string;
 };

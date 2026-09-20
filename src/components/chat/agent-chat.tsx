@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, Sparkles } from "lucide-react";
+import { ArrowUp, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
   isCloudSseEvent,
   shouldIgnoreSseForRun,
+  type TodoItem,
   type WireChatMessage,
 } from "@/lib/cloud-events";
 import { cn } from "@/lib/utils";
-import { ChatMessageList } from "./chat-message-list";
+import { ChatMessageList, COMPOSER_SHELL } from "./chat-message-list";
+import { PlanTodoList } from "./plan-todo-list";
+import { UI_COPY } from "./ui-copy";
 import type { ChatMessage, ChatRole } from "./types";
 
 function createId() {
@@ -38,6 +40,7 @@ function applyDelta(
         serverMessageId: messageId,
         role: "assistant",
         content: delta,
+        reasoningStreaming: false,
       },
     ];
   }
@@ -47,17 +50,16 @@ function applyDelta(
     ...existing,
     serverMessageId: messageId,
     content: existing.content + delta,
+    reasoningStreaming: false,
   };
   return next;
 }
 
-function applyCompleted(
+function applyReasoningDelta(
   messages: ChatMessage[],
   messageId: string,
-  role: string,
-  content: string,
+  delta: string,
 ): ChatMessage[] {
-  const chatRole: ChatRole = role === "user" ? "user" : "assistant";
   const index = messages.findIndex(
     (m) => m.serverMessageId === messageId || m.id === messageId,
   );
@@ -67,17 +69,61 @@ function applyCompleted(
       {
         id: messageId,
         serverMessageId: messageId,
-        role: chatRole,
-        content,
+        role: "assistant",
+        content: "",
+        reasoning: delta,
+        reasoningStreaming: true,
       },
     ];
   }
   const next = [...messages];
+  const existing = next[index];
   next[index] = {
-    ...next[index],
+    ...existing,
+    serverMessageId: messageId,
+    reasoning: (existing.reasoning ?? "") + delta,
+    reasoningStreaming: existing.content.length === 0,
+  };
+  return next;
+}
+
+function applyCompleted(
+  messages: ChatMessage[],
+  messageId: string,
+  role: string,
+  content: string,
+  reasoningContent?: string | null,
+): ChatMessage[] {
+  const chatRole: ChatRole = role === "user" ? "user" : "assistant";
+  const index = messages.findIndex(
+    (m) => m.serverMessageId === messageId || m.id === messageId,
+  );
+  const reasoning =
+    reasoningContent && reasoningContent.length > 0
+      ? reasoningContent
+      : undefined;
+  if (index === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        serverMessageId: messageId,
+        role: chatRole,
+        content,
+        reasoning,
+        reasoningStreaming: false,
+      },
+    ];
+  }
+  const next = [...messages];
+  const existing = next[index];
+  next[index] = {
+    ...existing,
     serverMessageId: messageId,
     role: chatRole,
     content,
+    reasoning: reasoning ?? existing.reasoning,
+    reasoningStreaming: false,
   };
   return next;
 }
@@ -87,17 +133,70 @@ export function AgentChat() {
   const [draft, setDraft] = useState("");
   const [isReplying, setIsReplying] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
+  const [plan_mode, set_plan_mode] = useState(false);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const runEndedRef = useRef(false);
+  const stickToBottomRef = useRef(true);
+  const [composerPad, setComposerPad] = useState(200);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isReplying;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isReplying, replyError]);
+    void invoke<{ default_plan_mode?: boolean }>("get_cloud_config")
+      .then((cfg) => {
+        if (cfg?.default_plan_mode) {
+          set_plan_mode(true);
+        }
+      })
+      .catch(() => {
+        /* keep UI default off */
+      });
+  }, []);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+
+    const syncSpace = () => {
+      // Include a small buffer so the last lines clear the floating dock.
+      const next = Math.ceil(composer.getBoundingClientRect().height) + 28;
+      setComposerPad(next);
+      document.documentElement.style.setProperty(
+        "--chat-composer-space",
+        `${next}px`,
+      );
+    };
+    syncSpace();
+    const observer = new ResizeObserver(syncSpace);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const shell = scrollRef.current;
+    if (!shell) return;
+
+    const onScroll = () => {
+      const distance =
+        shell.scrollHeight - shell.scrollTop - shell.clientHeight;
+      stickToBottomRef.current = distance < 80;
+    };
+    shell.addEventListener("scroll", onScroll, { passive: true });
+    return () => shell.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const shell = scrollRef.current;
+    if (!shell) return;
+    shell.scrollTo({ top: shell.scrollHeight, behavior: "smooth" });
+  }, [messages, isReplying, replyError, todos, composerPad]);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +216,11 @@ export function AgentChat() {
             applyDelta(prev, payload.message_id, payload.delta),
           );
           break;
+        case "reasoning.delta":
+          setMessages((prev) =>
+            applyReasoningDelta(prev, payload.message_id, payload.delta),
+          );
+          break;
         case "message.completed":
           setMessages((prev) =>
             applyCompleted(
@@ -124,8 +228,12 @@ export function AgentChat() {
               payload.message_id,
               payload.role,
               payload.content,
+              payload.reasoning_content,
             ),
           );
+          break;
+        case "todos.updated":
+          setTodos(payload.todos);
           break;
         case "run.finished":
           if (
@@ -148,7 +256,7 @@ export function AgentChat() {
           }
           runEndedRef.current = true;
           setIsReplying(false);
-          setReplyError(payload.message || "请求失败");
+          setReplyError(payload.message || UI_COPY.requestFailed);
           textareaRef.current?.focus();
           break;
         default:
@@ -179,20 +287,41 @@ export function AgentChat() {
     };
 
     const nextMessages = [...messages, userMessage];
-    setMessages(nextMessages);
+    await startRunWithMessages(nextMessages);
     setDraft("");
+  }
+
+  async function resubmitUserMessage(messageId: string, content: string) {
+    const trimmed = content.trim();
+    if (!trimmed || isReplying) return;
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0) return;
+
+    const userMessage: ChatMessage = {
+      id: createId(),
+      role: "user",
+      content: trimmed,
+    };
+    const nextMessages = [...messages.slice(0, index), userMessage];
+    await startRunWithMessages(nextMessages);
+  }
+
+  async function startRunWithMessages(nextMessages: ChatMessage[]) {
+    setMessages(nextMessages);
     setReplyError(null);
     setIsReplying(true);
-    // Clear before invoke so early SSE from the new run is not filtered
-    // against a stale id left by a prior error path.
+    stickToBottomRef.current = true;
+    if (!plan_mode) {
+      setTodos([]);
+    }
     activeRunIdRef.current = null;
     runEndedRef.current = false;
 
     try {
       const { run_id } = await invoke<{ run_id: string }>("start_run", {
         messages: toWireMessages(nextMessages),
+        plan_mode,
       });
-      // Do not re-arm after finished/error that raced ahead of invoke return.
       if (run_id && !runEndedRef.current) {
         activeRunIdRef.current = run_id;
       }
@@ -204,7 +333,7 @@ export function AgentChat() {
           ? err.message
           : typeof err === "string"
             ? err
-            : "启动对话失败";
+            : UI_COPY.startFailed;
       setIsReplying(false);
       setReplyError(message);
       textareaRef.current?.focus();
@@ -233,83 +362,124 @@ export function AgentChat() {
         <div className="animate-soft-pulse absolute left-1/2 top-[18%] h-40 w-40 -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
       </div>
 
-      <header className="flex shrink-0 items-center justify-center px-6 pt-6">
-        <div className="animate-fade-rise flex items-center gap-2 text-foreground/80">
-          <Sparkles className="size-4 text-primary" aria-hidden />
-          <span className="font-heading text-lg font-semibold tracking-tight">
-            Andromeda
-          </span>
+      {/* Parent scrollport — scrollbar on the shell, composer floats above content only. */}
+      <div className="chat-frame">
+        <div ref={scrollRef} className="chat-shell">
+          <main
+            className={cn(
+              "chat-column mx-auto w-full pt-2",
+              !hasMessages && "flex min-h-full flex-col",
+            )}
+            style={{ paddingBottom: composerPad }}
+          >
+            {hasMessages ? (
+              <section className="min-w-0">
+                {plan_mode || todos.length > 0 ? (
+                  <PlanTodoList
+                    todos={todos}
+                    waiting={plan_mode && isReplying && todos.length === 0}
+                    className="mb-3"
+                  />
+                ) : null}
+                <ChatMessageList
+                  messages={messages}
+                  disabled={isReplying}
+                  onResubmitUserMessage={(messageId, content) => {
+                    void resubmitUserMessage(messageId, content);
+                  }}
+                />
+                {replyError ? (
+                  <p
+                    role="alert"
+                    className="animate-fade-rise px-1 py-2 text-xs text-destructive"
+                  >
+                    {replyError}
+                  </p>
+                ) : null}
+                <div
+                  ref={bottomRef}
+                  className="chat-scroll-anchor"
+                  aria-hidden
+                />
+              </section>
+            ) : (
+              <section className="flex min-h-0 flex-1 flex-col items-center justify-center">
+                <div className="animate-fade-rise mx-auto max-w-md -translate-y-[8vh] text-center">
+                  <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">
+                    {UI_COPY.hello}
+                  </h1>
+                  <p className="mt-3 text-base leading-relaxed text-muted-foreground">
+                    {UI_COPY.emptyHint}
+                  </p>
+                  {plan_mode ? (
+                    <PlanTodoList
+                      todos={todos}
+                      waiting={isReplying && todos.length === 0}
+                      className="mt-4 text-left"
+                    />
+                  ) : null}
+                  {replyError ? (
+                    <p role="alert" className="mt-3 text-xs text-destructive">
+                      {replyError}
+                    </p>
+                  ) : null}
+                </div>
+              </section>
+            )}
+          </main>
         </div>
-      </header>
 
-      <main className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col px-4 pb-8 pt-2">
-        {hasMessages ? (
-          <section className="min-h-0 flex-1 overflow-hidden pb-3">
-            <ScrollArea className="h-full pr-2">
-              <ChatMessageList messages={messages} />
-              {isReplying ? (
-                <p className="animate-fade-rise px-1 py-2 text-xs text-muted-foreground">
-                  正在思考…
-                </p>
-              ) : null}
-              {replyError ? (
-                <p
-                  role="alert"
-                  className="animate-fade-rise px-1 py-2 text-xs text-destructive"
-                >
-                  {replyError}
-                </p>
-              ) : null}
-              <div ref={bottomRef} />
-            </ScrollArea>
-          </section>
-        ) : (
-          <section className="flex min-h-0 flex-1 flex-col items-center justify-end pb-6">
-            <div className="animate-fade-rise mx-auto mb-6 max-w-md text-center">
-              <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
-                有什么可以帮你？
-              </h1>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                在下方输入指令或问题，开始与智能体对话。
-              </p>
-              {replyError ? (
-                <p role="alert" className="mt-3 text-xs text-destructive">
-                  {replyError}
-                </p>
-              ) : null}
-            </div>
-          </section>
-        )}
-
-        <form
-          onSubmit={handleSubmit}
-          className={cn(
-            "animate-fade-rise w-full",
-            hasMessages ? "mt-auto" : "mb-[12vh]",
-          )}
-          style={{ animationDelay: "80ms" }}
-        >
-          <div className="rounded-3xl border border-border/80 bg-card/90 p-2 shadow-[0_10px_40px_-20px_oklch(0.45_0.05_210_/_0.35)] backdrop-blur-md transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.5_0.07_185_/_0.4)]">
+        <div ref={composerRef} className="chat-composer-dock pointer-events-none">
+          <form
+            onSubmit={handleSubmit}
+            className="chat-column pointer-events-auto mx-auto w-full animate-fade-rise pb-6"
+            style={{ animationDelay: "80ms" }}
+          >
+          <div
+            className={cn(
+              COMPOSER_SHELL,
+              "p-2 transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.5_0.07_185_/_0.4)]",
+            )}
+          >
             <Textarea
               ref={textareaRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="问 Andromeda 任何事情…"
+              placeholder={UI_COPY.placeholder}
               rows={1}
               disabled={isReplying}
-              aria-label="智能体消息输入"
+              aria-label={UI_COPY.ariaInput}
               className="min-h-12 border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
             />
             <div className="flex items-center justify-between gap-3 px-1.5 pb-1 pt-0.5">
-              <p className="text-[11px] text-muted-foreground">
-                Enter 发送 · Shift+Enter 换行
-              </p>
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => set_plan_mode((v) => !v)}
+                  disabled={isReplying}
+                  aria-pressed={plan_mode}
+                  title={UI_COPY.planTitle}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-xl border px-2 py-1 text-[11px] transition-colors",
+                    plan_mode
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-transparent text-muted-foreground hover:bg-muted/60",
+                    isReplying && "opacity-50",
+                  )}
+                >
+                  <ListTodo className="size-3.5" aria-hidden />
+                  {UI_COPY.planButton}
+                </button>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {UI_COPY.enterHint}
+                </p>
+              </div>
               <Button
                 type="submit"
                 size="icon-sm"
                 disabled={!canSend}
-                aria-label="发送消息"
+                aria-label={UI_COPY.ariaSend}
                 className="rounded-2xl"
               >
                 <ArrowUp data-icon="inline-start" />
@@ -317,7 +487,8 @@ export function AgentChat() {
             </div>
           </div>
         </form>
-      </main>
+        </div>
+      </div>
     </div>
   );
 }

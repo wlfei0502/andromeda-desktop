@@ -22,7 +22,9 @@ fn is_known_sse_type(type_name: &str) -> bool {
         type_name,
         "run.started"
             | "message.delta"
+            | "reasoning.delta"
             | "message.completed"
+            | "todos.updated"
             | "run.finished"
             | "error"
     )
@@ -172,6 +174,39 @@ mod tests {
         let block = "data: {\"type\":\"tool.request\",\"run_id\":\"r1\",\"tool_call_id\":\"t1\",\"name\":\"shell\",\"arguments\":{}}\n\n";
         let ev = parse_sse_block(block).unwrap();
         assert!(ev.is_none());
+    }
+
+    #[test]
+    fn parses_reasoning_delta_block() {
+        let block = "data: {\"type\":\"reasoning.delta\",\"run_id\":\"r1\",\"message_id\":\"m1\",\"delta\":\"think\"}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::ReasoningDelta {
+                run_id,
+                message_id,
+                delta,
+            } => {
+                assert_eq!(run_id, "r1");
+                assert_eq!(message_id, "m1");
+                assert_eq!(delta, "think");
+            }
+            _ => panic!("expected ReasoningDelta"),
+        }
+    }
+
+    #[test]
+    fn parses_todos_updated_block() {
+        let block = "data: {\"type\":\"todos.updated\",\"run_id\":\"r1\",\"todos\":[{\"id\":\"t1\",\"content\":\"layers\",\"status\":\"in_progress\"}]}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::TodosUpdated { run_id, todos } => {
+                assert_eq!(run_id, "r1");
+                assert_eq!(todos.len(), 1);
+                assert_eq!(todos[0].id, "t1");
+                assert_eq!(todos[0].status, crate::cloud::wire::TodoStatus::InProgress);
+            }
+            _ => panic!("expected TodosUpdated"),
+        }
     }
 
     #[test]

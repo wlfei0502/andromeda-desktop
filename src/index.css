@@ -7,7 +7,7 @@
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: "Plus Jakarta Sans Variable", sans-serif;
+  --font-sans: "Plus Jakarta Sans Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -84,6 +84,15 @@
   --sidebar-accent-foreground: oklch(0.35 0.05 185);
   --sidebar-border: oklch(0.9 0.02 195);
   --sidebar-ring: oklch(0.68 0.07 185);
+
+  /* Fluid chat column — rem-based cap, fills parent on small screens. */
+  --chat-column-max-width: 72rem;
+  --chat-composer-space: 14rem;
+  --chat-scrollbar-size: 0.875rem;
+  --panel-left-min: 180px;
+  --panel-left-max: 420px;
+  --panel-right-min: 220px;
+  --panel-right-max: 520px;
 }
 
 .dark {
@@ -128,7 +137,7 @@
   html,
   body,
   #root {
-    @apply h-full overflow-x-clip;
+    @apply h-full overflow-x-auto;
   }
 
   body {
@@ -165,6 +174,151 @@
   animation: soft-pulse 2.4s ease-in-out infinite;
 }
 
+.chat-column {
+  container-type: inline-size;
+  container-name: chat;
+  box-sizing: border-box;
+  width: min(100%, var(--chat-column-max-width));
+  max-width: 100%;
+  min-width: 0;
+  margin-inline: auto;
+  /* Fluid inset: rem floor for mobile, grows with column, soft rem ceiling. */
+  --chat-pad-x: clamp(1rem, 4.5cqi, 2.5rem);
+  padding-inline: var(--chat-pad-x);
+}
+
+/* Parent scrollport — native scrollbar beside the floating composer. */
+.chat-frame {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.chat-shell {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.55 0.02 210 / 0.22) transparent;
+}
+
+.chat-shell::-webkit-scrollbar {
+  width: var(--chat-scrollbar-size);
+}
+
+.chat-shell::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: oklch(0.55 0.02 210 / 0.22);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.chat-shell::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.55 0.02 210 / 0.38);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+.chat-shell::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thinking-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.55 0.02 210 / 0.2) transparent;
+}
+
+.thinking-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.thinking-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: oklch(0.55 0.02 210 / 0.2);
+}
+
+.thinking-scroll::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.55 0.02 210 / 0.35);
+}
+
+.thinking-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Floating composer: leave the parent scrollbar uncovered (Cursor-like). */
+.chat-composer-dock {
+  position: absolute;
+  left: 0;
+  right: var(--chat-scrollbar-size);
+  bottom: 0;
+  padding-top: 3rem;
+  background: linear-gradient(
+    to top,
+    var(--background) 0%,
+    var(--background) 42%,
+    color-mix(in oklab, var(--background) 75%, transparent) 68%,
+    transparent 100%
+  );
+}
+
+.chat-scroll-anchor {
+  height: 1px;
+  scroll-margin-bottom: calc(var(--chat-composer-space) + 0.75rem);
+}
+
+.panel-splitter {
+  position: relative;
+  z-index: 20;
+  width: 4px;
+  flex-shrink: 0;
+  margin-inline: -2px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.panel-splitter::after {
+  content: "";
+  position: absolute;
+  inset: 0 -2px;
+}
+
+.panel-splitter:hover,
+.panel-splitter:focus-visible,
+body.panel-resizing .panel-splitter {
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
+}
+
+body.panel-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.app-chrome {
+  background: color-mix(in oklab, var(--background) 92%, var(--muted));
+}
+
+.panel-side {
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.panel-side-left {
+  min-width: var(--panel-left-min, 180px);
+  max-width: var(--panel-left-max, 420px);
+}
+
+.panel-side-right {
+  min-width: var(--panel-right-min, 220px);
+  max-width: var(--panel-right-max, 520px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-rise,
   .animate-soft-pulse {
@@ -173,7 +327,7 @@
 }
 
 .md-content {
-  @apply text-sm leading-relaxed text-foreground;
+  @apply min-w-0 text-base leading-relaxed text-foreground [overflow-wrap:anywhere];
 }
 
 .md-content > :first-child {
@@ -196,16 +350,16 @@
 }
 
 .md-content h1 {
-  @apply text-lg;
+  @apply text-xl;
 }
 
 .md-content h2 {
-  @apply text-base;
+  @apply text-lg;
 }
 
 .md-content h3,
 .md-content h4 {
-  @apply text-sm;
+  @apply text-base;
 }
 
 .md-content ul {

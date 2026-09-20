@@ -24,6 +24,22 @@ pub struct ToolCallWire {
     pub arguments: Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TodoItem {
+    pub id: String,
+    pub content: String,
+    pub status: TodoStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageSource {
@@ -32,7 +48,21 @@ pub enum MessageSource {
     FollowUp,
 }
 
-/// Cloud SSE wire events — `type` tag aligned with andromeda `wire::SseEvent`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct RunOptions {
+    #[serde(default = "default_persist")]
+    pub persist: bool,
+    #[serde(default)]
+    pub plan_mode: bool,
+    #[serde(default)]
+    pub subagents: bool,
+}
+
+fn default_persist() -> bool {
+    true
+}
+
+/// Cloud SSE wire events — `type` tag aligned with andromeda `protocol::SseEvent`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum SseEvent {
@@ -40,6 +70,12 @@ pub enum SseEvent {
     RunStarted { run_id: String },
     #[serde(rename = "message.delta")]
     MessageDelta {
+        run_id: String,
+        message_id: String,
+        delta: String,
+    },
+    #[serde(rename = "reasoning.delta")]
+    ReasoningDelta {
         run_id: String,
         message_id: String,
         delta: String,
@@ -54,6 +90,8 @@ pub enum SseEvent {
         tool_calls: Option<Vec<ToolCallWire>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<MessageSource>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     #[serde(rename = "tool.request")]
     ToolRequest {
@@ -61,6 +99,11 @@ pub enum SseEvent {
         tool_call_id: String,
         name: String,
         arguments: Value,
+    },
+    #[serde(rename = "todos.updated")]
+    TodosUpdated {
+        run_id: String,
+        todos: Vec<TodoItem>,
     },
     #[serde(rename = "run.finished")]
     RunFinished { run_id: String, reason: String },
@@ -78,8 +121,10 @@ impl SseEvent {
         match self {
             SseEvent::RunStarted { .. } => "run.started",
             SseEvent::MessageDelta { .. } => "message.delta",
+            SseEvent::ReasoningDelta { .. } => "reasoning.delta",
             SseEvent::MessageCompleted { .. } => "message.completed",
             SseEvent::ToolRequest { .. } => "tool.request",
+            SseEvent::TodosUpdated { .. } => "todos.updated",
             SseEvent::RunFinished { .. } => "run.finished",
             SseEvent::Error { .. } => "error",
         }

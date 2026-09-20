@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::cloud::sse::{parse_sse_block, push_sse_line, SseParseState};
-use crate::cloud::wire::{ChatWireMessage, SseEvent};
+use crate::cloud::wire::{ChatWireMessage, RunOptions, SseEvent};
 use crate::config::DesktopConfig;
 
 const SSE_CHANNEL: &str = "agent://sse";
@@ -19,6 +19,7 @@ struct CreateRunRequest {
     tools: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
+    options: RunOptions,
 }
 
 fn emit_sse(app: &AppHandle, event: &SseEvent) {
@@ -43,22 +44,34 @@ fn base_url(config: &DesktopConfig) -> String {
 }
 
 /// POST `/v1/runs`, return `X-Run-Id` when present, spawn SSE reader that emits on `agent://sse`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn start_run(
     app: AppHandle,
     messages: Vec<ChatWireMessage>,
+    plan_mode: Option<bool>,
 ) -> Result<StartRunResponse, String> {
     let config = DesktopConfig::load().map_err(|e| {
         emit_error(&app, "", e.clone());
         e
     })?;
 
+    let plan_mode = plan_mode.unwrap_or(config.default_plan_mode);
     let url = format!("{}/v1/runs", base_url(&config));
     let body = CreateRunRequest {
         messages,
         tools: vec![],
         session_id: None,
+        options: RunOptions {
+            persist: true,
+            plan_mode,
+            subagents: false,
+        },
     };
+
+    match serde_json::to_string(&body) {
+        Ok(json) => eprintln!("start_run POST {url} body={json}"),
+        Err(err) => eprintln!("start_run POST {url} (body serialize failed: {err})"),
+    }
 
     let client = reqwest::Client::new();
     let resp = client
@@ -232,7 +245,7 @@ fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str) -> bool {
 }
 
 /// POST `/v1/runs/{id}/cancel`.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn cancel_run(run_id: String) -> Result<(), String> {
     if run_id.is_empty() {
         return Err("run_id is empty".into());

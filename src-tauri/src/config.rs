@@ -13,12 +13,16 @@ fn default_cloud_base_url() -> String {
 pub struct DesktopConfig {
     #[serde(default = "default_cloud_base_url")]
     pub cloud_base_url: String,
+    /// Default for `start_run` when the UI does not pass `plan_mode`.
+    #[serde(default)]
+    pub default_plan_mode: bool,
 }
 
 impl Default for DesktopConfig {
     fn default() -> Self {
         Self {
             cloud_base_url: default_cloud_base_url(),
+            default_plan_mode: false,
         }
     }
 }
@@ -116,6 +120,19 @@ mod tests {
         let cfg =
             DesktopConfig::from_toml(r#"cloud_base_url = "http://127.0.0.1:9000""#).unwrap();
         assert_eq!(cfg.cloud_base_url, "http://127.0.0.1:9000");
+        assert!(!cfg.default_plan_mode);
+    }
+
+    #[test]
+    fn parses_default_plan_mode() {
+        let cfg = DesktopConfig::from_toml(
+            r#"
+            cloud_base_url = "http://127.0.0.1:8082"
+            default_plan_mode = true
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.default_plan_mode);
     }
 
     #[test]

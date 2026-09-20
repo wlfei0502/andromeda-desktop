@@ -25,9 +25,12 @@ cargo run
 
 ```toml
 cloud_base_url = "http://127.0.0.1:8082"
+# default_plan_mode = false
 ```
 
 缺失时回退默认 `http://127.0.0.1:8082`。
+
+输入框旁可点 **任务计划** 开启 Plan Mode：请求会带 `options.plan_mode=true`，云端推送 `todos.updated` 时桌面显示待办列表。
 
 ### 3. 启动桌面
 
