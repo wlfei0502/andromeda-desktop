@@ -20,13 +20,33 @@ export function PanelSplitter({
 }: PanelSplitterProps) {
   const draggingRef = useRef(false);
   const lastXRef = useRef(0);
+  const valueRef = useRef(value);
+  const minRef = useRef(min);
+  const maxRef = useRef(max);
+  const onDragRef = useRef(onDrag);
+  valueRef.current = value;
+  minRef.current = min;
+  maxRef.current = max;
+  onDragRef.current = onDrag;
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       if (!draggingRef.current) return;
       const delta = event.clientX - lastXRef.current;
+      const signed = side === "left" ? delta : -delta;
+      const current = valueRef.current;
+      const lo = minRef.current;
+      const hi = maxRef.current;
+
+      // At min/max: ignore further movement past the bound, but keep lastX
+      // so reversing direction resumes smoothly without a jump.
+      if ((signed < 0 && current <= lo) || (signed > 0 && current >= hi)) {
+        lastXRef.current = event.clientX;
+        return;
+      }
+
       lastXRef.current = event.clientX;
-      onDrag(side === "left" ? delta : -delta);
+      onDragRef.current(signed);
     };
     const onUp = () => {
       if (!draggingRef.current) return;
@@ -41,7 +61,7 @@ export function PanelSplitter({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [onDrag, side]);
+  }, [side]);
 
   return (
     <div

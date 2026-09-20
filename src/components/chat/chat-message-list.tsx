@@ -151,9 +151,6 @@ export function ChatMessageList({
               />
             ) : (
               <div className="min-w-0 w-full overflow-hidden text-base leading-relaxed [overflow-wrap:anywhere]">
-                <p className="mb-1.5 text-[11px] font-medium tracking-wide text-primary">
-                  Andromeda
-                </p>
                 {hasReasoning ? (
                   <ThinkingBlock
                     content={message.reasoning ?? ""}

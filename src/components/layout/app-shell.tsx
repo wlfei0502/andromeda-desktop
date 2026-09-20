@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { PanelLeft, PanelRight } from "lucide-react";
 import { AgentChat } from "@/components/chat/agent-chat";
 import { Button } from "@/components/ui/button";
@@ -13,13 +14,35 @@ const COPY = {
   toggleRight: "\u5207\u6362\u53f3\u4fa7\u9762\u677f",
 } as const;
 
-function PanelPlaceholder({ title }: { title: string }) {
+function PanelPlaceholder({
+  title,
+  onClose,
+  closeLabel,
+  closeIcon,
+}: {
+  title: string;
+  onClose: () => void;
+  closeLabel: string;
+  closeIcon: "left" | "right";
+}) {
+  const Icon = closeIcon === "left" ? PanelLeft : PanelRight;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-10 shrink-0 items-center border-b border-border/60 px-3">
-        <p className="truncate text-xs font-medium tracking-wide text-muted-foreground">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/60 px-1.5">
+        <p className="min-w-0 flex-1 truncate px-1.5 text-xs font-medium tracking-wide text-muted-foreground">
           {title}
         </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={closeLabel}
+          title={closeLabel}
+          onClick={onClose}
+          className="shrink-0 text-muted-foreground"
+        >
+          <Icon />
+        </Button>
       </div>
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="max-w-[12rem] text-center text-sm leading-relaxed text-muted-foreground/80">
@@ -31,92 +54,131 @@ function PanelPlaceholder({ title }: { title: string }) {
 }
 
 export function AppShell() {
-  const { layout, toggleLeft, toggleRight, resizeLeftBy, resizeRightBy } =
-    usePanelLayout();
+  const {
+    layout,
+    toggleLeft,
+    toggleRight,
+    resizeLeftBy,
+    resizeRightBy,
+    reportContainerWidth,
+    leftDragMax,
+    rightDragMax,
+  } = usePanelLayout();
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width != null) reportContainerWidth(width);
+    });
+    observer.observe(row);
+    reportContainerWidth(row.getBoundingClientRect().width);
+    return () => observer.disconnect();
+  }, [reportContainerWidth]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <header className="app-chrome flex h-11 shrink-0 items-center gap-2 border-b border-border/70 px-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-pressed={layout.leftOpen}
-          aria-label={COPY.toggleLeft}
-          title={COPY.toggleLeft}
-          onClick={toggleLeft}
-          className={cn(layout.leftOpen && "bg-muted text-foreground")}
-        >
-          <PanelLeft />
-        </Button>
-        <div className="flex min-w-0 flex-1 items-center justify-center">
-          <span className="font-heading text-sm font-semibold tracking-tight text-foreground/85">
-            Andromeda
-          </span>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-pressed={layout.rightOpen}
-          aria-label={COPY.toggleRight}
-          title={COPY.toggleRight}
-          onClick={toggleRight}
-          className={cn(layout.rightOpen && "bg-muted text-foreground")}
-        >
-          <PanelRight />
-        </Button>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        {layout.leftOpen ? (
-          <>
-            <aside
-              className="panel-side panel-side-left flex min-h-0 shrink-0 flex-col border-r border-border/70 bg-sidebar/40"
-              style={{
-                width: layout.leftWidth,
-                minWidth: PANEL_LIMITS.leftMin,
-                maxWidth: PANEL_LIMITS.leftMax,
-              }}
-            >
-              <PanelPlaceholder title={COPY.leftTitle} />
-            </aside>
-            <PanelSplitter
-              side="left"
-              min={PANEL_LIMITS.leftMin}
-              max={PANEL_LIMITS.leftMax}
-              value={layout.leftWidth}
-              onDrag={resizeLeftBy}
+    <div
+      ref={rowRef}
+      className="flex h-full min-h-0 min-w-0 overflow-hidden bg-background"
+    >
+      {layout.leftOpen ? (
+        <>
+          <aside
+            className="panel-side panel-side-left flex min-h-0 shrink-0 flex-col border-r border-border/70 bg-sidebar/40"
+            style={{
+              width: layout.leftWidth,
+              minWidth: PANEL_LIMITS.leftMin,
+              maxWidth: PANEL_LIMITS.leftMax,
+            }}
+          >
+            <PanelPlaceholder
+              title={COPY.leftTitle}
+              onClose={toggleLeft}
+              closeLabel={COPY.toggleLeft}
+              closeIcon="left"
             />
-          </>
+          </aside>
+          <PanelSplitter
+            side="left"
+            min={PANEL_LIMITS.leftMin}
+            max={leftDragMax}
+            value={layout.leftWidth}
+            onDrag={resizeLeftBy}
+          />
+        </>
+      ) : null}
+
+      <main
+        className="panel-center relative min-h-0 flex-1"
+        style={{ minWidth: PANEL_LIMITS.centerMin }}
+      >
+        {!layout.leftOpen ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={COPY.toggleLeft}
+            title={COPY.toggleLeft}
+            onClick={toggleLeft}
+            className={cn(
+              "panel-float-toggle absolute top-2 left-2 z-30",
+              "bg-background/80 text-muted-foreground shadow-sm backdrop-blur-sm",
+              "hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <PanelLeft />
+          </Button>
         ) : null}
 
-        <main className="relative min-h-0 min-w-0 flex-1">
-          <AgentChat />
-        </main>
-
-        {layout.rightOpen ? (
-          <>
-            <PanelSplitter
-              side="right"
-              min={PANEL_LIMITS.rightMin}
-              max={PANEL_LIMITS.rightMax}
-              value={layout.rightWidth}
-              onDrag={resizeRightBy}
-            />
-            <aside
-              className="panel-side panel-side-right flex min-h-0 shrink-0 flex-col border-l border-border/70 bg-sidebar/40"
-              style={{
-                width: layout.rightWidth,
-                minWidth: PANEL_LIMITS.rightMin,
-                maxWidth: PANEL_LIMITS.rightMax,
-              }}
-            >
-              <PanelPlaceholder title={COPY.rightTitle} />
-            </aside>
-          </>
+        {!layout.rightOpen ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={COPY.toggleRight}
+            title={COPY.toggleRight}
+            onClick={toggleRight}
+            className={cn(
+              "panel-float-toggle absolute top-2 right-2 z-30",
+              "bg-background/80 text-muted-foreground shadow-sm backdrop-blur-sm",
+              "hover:bg-muted hover:text-foreground",
+            )}
+          >
+            <PanelRight />
+          </Button>
         ) : null}
-      </div>
+
+        <AgentChat />
+      </main>
+
+      {layout.rightOpen ? (
+        <>
+          <PanelSplitter
+            side="right"
+            min={PANEL_LIMITS.rightMin}
+            max={rightDragMax}
+            value={layout.rightWidth}
+            onDrag={resizeRightBy}
+          />
+          <aside
+            className="panel-side panel-side-right flex min-h-0 shrink-0 flex-col border-l border-border/70 bg-sidebar/40"
+            style={{
+              width: layout.rightWidth,
+              minWidth: PANEL_LIMITS.rightMin,
+              maxWidth: PANEL_LIMITS.rightMax,
+            }}
+          >
+            <PanelPlaceholder
+              title={COPY.rightTitle}
+              onClose={toggleRight}
+              closeLabel={COPY.toggleRight}
+              closeIcon="right"
+            />
+          </aside>
+        </>
+      ) : null}
     </div>
   );
 }

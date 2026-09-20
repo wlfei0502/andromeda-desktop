@@ -353,7 +353,7 @@ export function AgentChat() {
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"
@@ -452,8 +452,8 @@ export function AgentChat() {
               aria-label={UI_COPY.ariaInput}
               className="min-h-12 border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
             />
-            <div className="flex items-center justify-between gap-3 px-1.5 pb-1 pt-0.5">
-              <div className="flex min-w-0 items-center gap-2">
+            <div className="flex flex-nowrap items-center justify-between gap-3 px-1.5 pb-1 pt-0.5">
+              <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => set_plan_mode((v) => !v)}
@@ -461,7 +461,7 @@ export function AgentChat() {
                   aria-pressed={plan_mode}
                   title={UI_COPY.planTitle}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-xl border px-2 py-1 text-[11px] transition-colors",
+                    "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2 py-1 text-[11px] transition-colors",
                     plan_mode
                       ? "border-primary/40 bg-primary/10 text-primary"
                       : "border-transparent text-muted-foreground hover:bg-muted/60",
@@ -471,7 +471,7 @@ export function AgentChat() {
                   <ListTodo className="size-3.5" aria-hidden />
                   {UI_COPY.planButton}
                 </button>
-                <p className="truncate text-[11px] text-muted-foreground">
+                <p className="truncate whitespace-nowrap text-[11px] text-muted-foreground">
                   {UI_COPY.enterHint}
                 </p>
               </div>
