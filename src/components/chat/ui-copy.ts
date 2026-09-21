@@ -15,6 +15,7 @@ export const UI_COPY = {
   ariaSend: "\u53d1\u9001\u6d88\u606f",
   thinking: "\u601d\u8003\u4e2d\u2026",
   thinkingDone: "\u601d\u8003\u8fc7\u7a0b",
+  weatherQuery: "\u6b63\u5728\u67e5\u8be2\u5929\u6c14",
   todoPending: "\u5f85\u529e",
   todoInProgress: "\u8fdb\u884c\u4e2d",
   todoCompleted: "\u5b8c\u6210",

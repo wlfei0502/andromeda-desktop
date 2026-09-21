@@ -133,6 +133,7 @@ export function AgentChat() {
   const [draft, setDraft] = useState("");
   const [isReplying, setIsReplying] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
+  const [toolHint, setToolHint] = useState<string | null>(null);
   const [plan_mode, set_plan_mode] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -164,7 +165,6 @@ export function AgentChat() {
     if (!composer) return;
 
     const syncSpace = () => {
-      // Include a small buffer so the last lines clear the floating dock.
       const next = Math.ceil(composer.getBoundingClientRect().height) + 28;
       setComposerPad(next);
       document.documentElement.style.setProperty(
@@ -182,14 +182,27 @@ export function AgentChat() {
     const shell = scrollRef.current;
     if (!shell) return;
 
+    const syncInset = () => {
+      const gutter = Math.max(0, shell.offsetWidth - shell.clientWidth);
+      document.documentElement.style.setProperty(
+        "--chat-composer-inset",
+        `${gutter}px`,
+      );
+    };
     const onScroll = () => {
       const distance =
         shell.scrollHeight - shell.scrollTop - shell.clientHeight;
       stickToBottomRef.current = distance < 80;
     };
+    syncInset();
+    const observer = new ResizeObserver(syncInset);
+    observer.observe(shell);
     shell.addEventListener("scroll", onScroll, { passive: true });
-    return () => shell.removeEventListener("scroll", onScroll);
-  }, []);
+    return () => {
+      observer.disconnect();
+      shell.removeEventListener("scroll", onScroll);
+    };
+  }, [hasMessages]);
 
   useEffect(() => {
     if (!stickToBottomRef.current) return;
@@ -212,6 +225,7 @@ export function AgentChat() {
           activeRunIdRef.current = payload.run_id;
           break;
         case "message.delta":
+          setToolHint(null);
           setMessages((prev) =>
             applyDelta(prev, payload.message_id, payload.delta),
           );
@@ -235,7 +249,21 @@ export function AgentChat() {
         case "todos.updated":
           setTodos(payload.todos);
           break;
+        case "tool.request": {
+          const city =
+            payload.arguments &&
+            typeof payload.arguments.city === "string"
+              ? payload.arguments.city
+              : "";
+          setToolHint(
+            city
+              ? `${UI_COPY.weatherQuery}\uff1a${city}`
+              : UI_COPY.weatherQuery,
+          );
+          break;
+        }
         case "run.finished":
+          setToolHint(null);
           if (
             activeRunIdRef.current === null ||
             activeRunIdRef.current === payload.run_id
@@ -255,6 +283,7 @@ export function AgentChat() {
             activeRunIdRef.current = null;
           }
           runEndedRef.current = true;
+          setToolHint(null);
           setIsReplying(false);
           setReplyError(payload.message || UI_COPY.requestFailed);
           textareaRef.current?.focus();
@@ -309,6 +338,7 @@ export function AgentChat() {
   async function startRunWithMessages(nextMessages: ChatMessage[]) {
     setMessages(nextMessages);
     setReplyError(null);
+    setToolHint(null);
     setIsReplying(true);
     stickToBottomRef.current = true;
     if (!plan_mode) {
@@ -388,6 +418,11 @@ export function AgentChat() {
                     void resubmitUserMessage(messageId, content);
                   }}
                 />
+                {toolHint ? (
+                  <p className="px-1 py-2 text-xs text-muted-foreground">
+                    {toolHint}
+                  </p>
+                ) : null}
                 {replyError ? (
                   <p
                     role="alert"

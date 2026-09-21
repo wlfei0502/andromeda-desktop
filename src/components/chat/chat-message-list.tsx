@@ -121,14 +121,54 @@ function UserMessageBubble({
   );
 }
 
+/** Join reasoning from a tool-only turn into the following assistant reply. */
+function joinReasoning(current?: string, next?: string): string | undefined {
+  const left = current?.trim() ?? "";
+  const right = next?.trim() ?? "";
+  if (!left) return next;
+  if (!right) return current;
+  if (left === right || right.startsWith(left)) return next;
+  if (left.endsWith(right)) return current;
+  return `${current}\n\n${next}`;
+}
+
+/**
+ * A tool round often completes as an assistant message with reasoning and no
+ * body, then the next round adds another. Show that as one thinking card.
+ */
+function coalesceAssistantTurns(messages: ChatMessage[]): ChatMessage[] {
+  const visible: ChatMessage[] = [];
+  for (const message of messages) {
+    const prev = visible[visible.length - 1];
+    if (
+      prev &&
+      prev.role === "assistant" &&
+      message.role === "assistant" &&
+      prev.content.trim().length === 0
+    ) {
+      visible[visible.length - 1] = {
+        ...prev,
+        serverMessageId: message.serverMessageId ?? prev.serverMessageId,
+        content: message.content,
+        reasoning: joinReasoning(prev.reasoning, message.reasoning),
+        reasoningStreaming: Boolean(message.reasoningStreaming),
+      };
+      continue;
+    }
+    visible.push(message);
+  }
+  return visible;
+}
+
 export function ChatMessageList({
   messages,
   disabled = false,
   onResubmitUserMessage,
 }: ChatMessageListProps) {
+  const visible = coalesceAssistantTurns(messages);
   return (
     <div className="flex min-w-0 w-full flex-col gap-4 py-2">
-      {messages.map((message, index) => {
+      {visible.map((message, index) => {
         const isUser = message.role === "user";
         const hasReasoning =
           Boolean(message.reasoning) || message.reasoningStreaming;
@@ -157,11 +197,9 @@ export function ChatMessageList({
                     streaming={message.reasoningStreaming}
                   />
                 ) : null}
-                {message.content ? (
+                {message.content.trim() ? (
                   <MarkdownContent content={message.content} />
-                ) : message.reasoningStreaming ? null : (
-                  <p className="text-muted-foreground">…</p>
-                )}
+                ) : null}
               </div>
             )}
           </div>

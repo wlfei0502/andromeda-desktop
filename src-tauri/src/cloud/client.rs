@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::cloud::sse::{parse_sse_block, push_sse_line, SseParseState};
+use crate::cloud::weather::{client_tools, execute_tool};
 use crate::cloud::wire::{ChatWireMessage, RunOptions, SseEvent};
 use crate::config::DesktopConfig;
 
@@ -59,7 +60,7 @@ pub async fn start_run(
     let url = format!("{}/v1/runs", base_url(&config));
     let body = CreateRunRequest {
         messages,
-        tools: vec![],
+        tools: client_tools(),
         session_id: None,
         options: RunOptions {
             persist: true,
@@ -107,8 +108,9 @@ pub async fn start_run(
 
     let app_stream = app.clone();
     let run_id_for_stream = run_id.clone();
+    let cloud_base = base_url(&config);
     tauri::async_runtime::spawn(async move {
-        consume_sse_stream(app_stream, resp, run_id_for_stream).await;
+        consume_sse_stream(app_stream, resp, run_id_for_stream, cloud_base).await;
     });
 
     Ok(StartRunResponse { run_id })
@@ -170,7 +172,12 @@ fn is_terminal_sse_event(event: &SseEvent) -> bool {
     matches!(event, SseEvent::RunFinished { .. } | SseEvent::Error { .. })
 }
 
-async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: String) {
+async fn consume_sse_stream(
+    app: AppHandle,
+    resp: reqwest::Response,
+    run_id: String,
+    cloud_base: String,
+) {
     let mut state = SseParseState::new();
     let mut line_buf = SseUtf8LineBuffer::new();
     let mut stream = resp.bytes_stream();
@@ -186,7 +193,7 @@ async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: Str
         };
 
         for line in line_buf.push(&bytes) {
-            if handle_sse_line(&app, &mut state, &line, &run_id) {
+            if handle_sse_line(&app, &mut state, &line, &run_id, &cloud_base).await {
                 saw_terminal = true;
             }
         }
@@ -194,7 +201,7 @@ async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: Str
 
     // Flush a trailing block if the stream closed without a final blank line.
     if let Some(block) = push_sse_line(&mut state, "") {
-        if handle_sse_block(&app, &block, &run_id) {
+        if handle_sse_block(&app, &block, &run_id, &cloud_base).await {
             saw_terminal = true;
         }
     }
@@ -209,24 +216,61 @@ async fn consume_sse_stream(app: AppHandle, resp: reqwest::Response, run_id: Str
 }
 
 /// Returns true if a terminal event (`run.finished` / `error`) was emitted.
-fn handle_sse_line(
+async fn handle_sse_line(
     app: &AppHandle,
     state: &mut SseParseState,
     line: &str,
     run_id: &str,
+    cloud_base: &str,
 ) -> bool {
     if let Some(block) = push_sse_line(state, line) {
-        return handle_sse_block(app, &block, run_id);
+        return handle_sse_block(app, &block, run_id, cloud_base).await;
     }
     false
 }
 
 /// Returns true if a terminal event (`run.finished` / `error`) was emitted.
-fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str) -> bool {
+async fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str, cloud_base: &str) -> bool {
     match parse_sse_block(block) {
         Ok(Some(event)) => {
-            if matches!(event, SseEvent::ToolRequest { .. }) {
-                eprintln!("warn: ignoring tool.request (v1 has no local tools)");
+            if let SseEvent::ToolRequest {
+                run_id: tool_run_id,
+                tool_call_id,
+                name,
+                arguments,
+            } = &event
+            {
+                emit_sse(app, &event);
+                let target_run = if tool_run_id.is_empty() {
+                    run_id
+                } else {
+                    tool_run_id.as_str()
+                };
+                match execute_tool(name, arguments).await {
+                    Ok(content) => {
+                        if let Err(err) =
+                            post_tool_result(cloud_base, target_run, tool_call_id, &content, false)
+                                .await
+                        {
+                            emit_error(app, target_run, err);
+                            return true;
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(post_err) = post_tool_result(
+                            cloud_base,
+                            target_run,
+                            tool_call_id,
+                            &err,
+                            true,
+                        )
+                        .await
+                        {
+                            emit_error(app, target_run, post_err);
+                            return true;
+                        }
+                    }
+                }
                 return false;
             }
             let terminal = is_terminal_sse_event(&event);
@@ -234,7 +278,7 @@ fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str) -> bool {
             terminal
         }
         Ok(None) => {
-            eprintln!("warn: ignored SSE block (tool.request or unknown type)");
+            eprintln!("warn: ignored SSE block (unknown type)");
             false
         }
         Err(e) => {
@@ -242,6 +286,38 @@ fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str) -> bool {
             true
         }
     }
+}
+
+async fn post_tool_result(
+    cloud_base: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    content: &str,
+    is_error: bool,
+) -> Result<(), String> {
+    let url = format!("{cloud_base}/v1/runs/{run_id}/tool_results");
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "tool_call_id": tool_call_id,
+            "content": content,
+            "is_error": is_error,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("tool_results request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(if body.is_empty() {
+            format!("tool_results HTTP {status}")
+        } else {
+            format!("tool_results HTTP {status}: {body}")
+        });
+    }
+    eprintln!("tool_results ok run={run_id} tool_call_id={tool_call_id} is_error={is_error}");
+    Ok(())
 }
 
 /// POST `/v1/runs/{id}/cancel`.

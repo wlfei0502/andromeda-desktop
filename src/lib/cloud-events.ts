@@ -29,6 +29,13 @@ export type CloudSseEvent =
       reasoning_content?: string | null;
     }
   | { type: "todos.updated"; run_id: string; todos: TodoItem[] }
+  | {
+      type: "tool.request";
+      run_id: string;
+      tool_call_id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+    }
   | { type: "run.finished"; run_id: string; reason: string }
   | { type: "error"; run_id: string; message: string; code?: string };
 
@@ -46,6 +53,7 @@ export function isCloudSseEvent(value: unknown): value is CloudSseEvent {
     type === "reasoning.delta" ||
     type === "message.completed" ||
     type === "todos.updated" ||
+    type === "tool.request" ||
     type === "run.finished" ||
     type === "error"
   );

@@ -32,8 +32,7 @@ fn is_known_sse_type(type_name: &str) -> bool {
 
 /// Parse one complete SSE event block (may end with a blank line).
 ///
-/// Returns `Ok(None)` for `tool.request` and unrecognized `type` values so the
-/// stream can continue without failing.
+/// Returns `Ok(None)` for unrecognized `type` values so the stream can continue.
 pub fn parse_sse_block(block: &str) -> Result<Option<SseEvent>, ParseError> {
     let mut data_lines: Vec<&str> = Vec::new();
 
@@ -66,10 +65,6 @@ pub fn parse_sse_block(block: &str) -> Result<Option<SseEvent>, ParseError> {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-
-    if type_name == "tool.request" {
-        return Ok(None);
-    }
 
     match serde_json::from_value::<SseEvent>(value) {
         Ok(ev) => Ok(Some(ev)),
@@ -170,10 +165,22 @@ mod tests {
     }
 
     #[test]
-    fn tool_request_returns_ok_none() {
-        let block = "data: {\"type\":\"tool.request\",\"run_id\":\"r1\",\"tool_call_id\":\"t1\",\"name\":\"shell\",\"arguments\":{}}\n\n";
-        let ev = parse_sse_block(block).unwrap();
-        assert!(ev.is_none());
+    fn parses_tool_request() {
+        let block = "data: {\"type\":\"tool.request\",\"run_id\":\"r1\",\"tool_call_id\":\"t1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"北京\"}}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::ToolRequest {
+                name,
+                tool_call_id,
+                arguments,
+                ..
+            } => {
+                assert_eq!(name, "get_weather");
+                assert_eq!(tool_call_id, "t1");
+                assert_eq!(arguments["city"], "北京");
+            }
+            _ => panic!("expected ToolRequest"),
+        }
     }
 
     #[test]

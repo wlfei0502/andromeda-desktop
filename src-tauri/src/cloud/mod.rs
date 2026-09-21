@@ -1,5 +1,6 @@
 pub mod client;
 pub mod sse;
+pub mod weather;
 pub mod wire;
 
 pub use client::{cancel_run, start_run, StartRunResponse};
