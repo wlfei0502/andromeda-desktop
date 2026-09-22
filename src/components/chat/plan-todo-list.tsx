@@ -12,13 +12,13 @@ const STATUS_LABEL: Record<TodoStatus, string> = {
 function statusClass(status: TodoStatus): string {
   switch (status) {
     case "in_progress":
-      return "border-primary/40 bg-primary/10 text-primary";
+      return "border-foreground/25 bg-foreground/[0.06] text-foreground";
     case "completed":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700";
+      return "border-border bg-muted text-muted-foreground";
     case "cancelled":
-      return "border-border bg-muted/60 text-muted-foreground line-through";
+      return "border-border bg-muted/60 text-muted-foreground/70 line-through";
     default:
-      return "border-border/70 bg-background/80 text-muted-foreground";
+      return "border-border/70 bg-card text-muted-foreground";
   }
 }
 
@@ -35,7 +35,7 @@ export function PlanTodoList({ todos, className, waiting = false }: PlanTodoList
   return (
     <aside
       className={cn(
-        "animate-fade-rise rounded-2xl border border-border/70 bg-card/80 p-3 shadow-sm backdrop-blur-sm",
+        "animate-fade-rise rounded-2xl border border-border/70 bg-card p-3 shadow-sm",
         className,
       )}
       aria-label={UI_COPY.planButton}

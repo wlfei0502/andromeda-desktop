@@ -68,6 +68,12 @@ fn default_persist() -> bool {
 pub enum SseEvent {
     #[serde(rename = "run.started")]
     RunStarted { run_id: String },
+    #[serde(rename = "run.resumed")]
+    RunResumed {
+        run_id: String,
+        revision: u64,
+        status: String,
+    },
     #[serde(rename = "message.delta")]
     MessageDelta {
         run_id: String,
@@ -152,6 +158,7 @@ impl SseEvent {
     pub fn event_name(&self) -> &'static str {
         match self {
             SseEvent::RunStarted { .. } => "run.started",
+            SseEvent::RunResumed { .. } => "run.resumed",
             SseEvent::MessageDelta { .. } => "message.delta",
             SseEvent::ReasoningDelta { .. } => "reasoning.delta",
             SseEvent::MessageCompleted { .. } => "message.completed",

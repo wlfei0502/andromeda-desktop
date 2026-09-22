@@ -38,6 +38,8 @@ cloud_base_url = "http://127.0.0.1:8082"
 - **任务计划**：`options.plan_mode=true`，云端推送 `todos.updated` 时显示待办
 - **子代理**：`options.subagents=true`，云端可拉起子代理并推送 `task.*`；本地 tool（如天气）已标 `readonly: true` 供 explore 过滤
 
+回复进行中可继续输入：消息进入本地队列（非用户气泡）。当前任务正常结束后自动发送队列首项；首项也可点中断图标立刻 `cancel` 并重开；每项可删除。SSE 意外断开时自动 `GET /v1/runs/{id}/events` 续订（最多 3 次）。
+
 ### 3. 启动桌面
 
 ```bash
@@ -52,3 +54,6 @@ npm run tauri dev
 - [ ] 连续两轮对话均成功
 - [ ] Plan Mode：待办列表随 `todos.updated` 更新
 - [ ] 子代理：开启后能看到 `task.started/completed` 提示；子代理 tool 仍回传到父 run
+- [ ] 回复中追问 → 进入队列；任务正常结束后自动发首项；首项中断 → cancel + 新 run；删除可从队列移除
+- [ ] 断 SSE / 杀连接后能自动续订并收完 `run.finished`
+- [ ] 回复中点停止 / Esc → `POST .../cancel` → `run.finished reason=cancelled`

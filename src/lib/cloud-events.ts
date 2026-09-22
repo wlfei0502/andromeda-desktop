@@ -9,6 +9,12 @@ export type TodoItem = {
 export type CloudSseEvent =
   | { type: "run.started"; run_id: string }
   | {
+      type: "run.resumed";
+      run_id: string;
+      revision: number;
+      status: string;
+    }
+  | {
       type: "message.delta";
       run_id: string;
       message_id: string;
@@ -27,6 +33,7 @@ export type CloudSseEvent =
       role: string;
       content: string;
       reasoning_content?: string | null;
+      source?: string | null;
     }
   | { type: "todos.updated"; run_id: string; todos: TodoItem[] }
   | {
@@ -72,6 +79,7 @@ export function isCloudSseEvent(value: unknown): value is CloudSseEvent {
   const type = (value as { type?: unknown }).type;
   return (
     type === "run.started" ||
+    type === "run.resumed" ||
     type === "message.delta" ||
     type === "reasoning.delta" ||
     type === "message.completed" ||

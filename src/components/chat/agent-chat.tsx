@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, Bot, ListTodo } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -12,9 +12,15 @@ import {
 } from "@/lib/cloud-events";
 import { cn } from "@/lib/utils";
 import { ChatMessageList, COMPOSER_SHELL } from "./chat-message-list";
+import { ComposerAttachButton, ComposerAttachPanel } from "./composer-attach-menu";
 import { PlanTodoList } from "./plan-todo-list";
+import { PendingQueue, type PendingQueueItem } from "./pending-queue";
 import { UI_COPY } from "./ui-copy";
 import type { ChatMessage, ChatRole } from "./types";
+
+const COMPOSER_LINE_H = 28;
+const COMPOSER_TALL_THRESHOLD = 40;
+const COMPOSER_MAX_H = 192;
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -138,6 +144,9 @@ export function AgentChat() {
   const [plan_mode, set_plan_mode] = useState(false);
   const [subagents, setSubagents] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [pendingQueue, setPendingQueue] = useState<PendingQueueItem[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -145,10 +154,31 @@ export function AgentChat() {
   const activeRunIdRef = useRef<string | null>(null);
   const runEndedRef = useRef(false);
   const stickToBottomRef = useRef(true);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const pendingQueueRef = useRef<PendingQueueItem[]>([]);
+  const pendingReopenRef = useRef<string | null>(null);
+  const startRunRef = useRef<
+    (next: ChatMessage[]) => Promise<void>
+  >(async () => {});
   const [composerPad, setComposerPad] = useState(200);
+  const [composerTall, setComposerTall] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
 
   const hasMessages = messages.length > 0;
-  const canSend = draft.trim().length > 0 && !isReplying;
+  const canEnqueue = isReplying && !!activeRunId && !cancelling;
+  const canCancel = isReplying && !!activeRunId && !cancelling;
+  const canSend =
+    draft.trim().length > 0 && (!isReplying || canEnqueue);
+  const canInterruptFirst =
+    pendingQueue.length > 0 && !cancelling && (!isReplying || !!activeRunId);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    pendingQueueRef.current = pendingQueue;
+  }, [pendingQueue]);
 
   useEffect(() => {
     void invoke<{
@@ -187,6 +217,21 @@ export function AgentChat() {
   }, []);
 
   useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    if (!draft) {
+      if (composerTall) setComposerTall(false);
+      el.style.height = `${COMPOSER_LINE_H}px`;
+      return;
+    }
+    el.style.height = "auto";
+    const scroll = el.scrollHeight;
+    const tall = scroll > COMPOSER_TALL_THRESHOLD;
+    if (tall !== composerTall) setComposerTall(tall);
+    el.style.height = `${Math.max(Math.min(scroll, COMPOSER_MAX_H), COMPOSER_LINE_H)}px`;
+  }, [draft, composerTall]);
+
+  useEffect(() => {
     const shell = scrollRef.current;
     if (!shell) return;
 
@@ -217,7 +262,16 @@ export function AgentChat() {
     const shell = scrollRef.current;
     if (!shell) return;
     shell.scrollTo({ top: shell.scrollHeight, behavior: "smooth" });
-  }, [messages, isReplying, replyError, todos, toolHint, taskHint, composerPad]);
+  }, [
+    messages,
+    isReplying,
+    replyError,
+    todos,
+    toolHint,
+    taskHint,
+    pendingQueue,
+    composerPad,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -231,6 +285,11 @@ export function AgentChat() {
       switch (payload.type) {
         case "run.started":
           activeRunIdRef.current = payload.run_id;
+          setActiveRunId(payload.run_id);
+          break;
+        case "run.resumed":
+          activeRunIdRef.current = payload.run_id;
+          setActiveRunId(payload.run_id);
           break;
         case "message.delta":
           setToolHint(null);
@@ -244,6 +303,10 @@ export function AgentChat() {
           );
           break;
         case "message.completed":
+          // Ignore mid-run steer events if any; product path is queue + reopen.
+          if (payload.source === "steer") {
+            break;
+          }
           setMessages((prev) =>
             applyCompleted(
               prev,
@@ -292,33 +355,53 @@ export function AgentChat() {
           setTaskHint(`${UI_COPY.taskTimedOut}\uff1a${payload.task_id}`);
           break;
         case "run.finished":
-          setToolHint(null);
-          setTaskHint(null);
-          if (
-            activeRunIdRef.current === null ||
-            activeRunIdRef.current === payload.run_id
-          ) {
-            activeRunIdRef.current = null;
-          }
-          runEndedRef.current = true;
-          setIsReplying(false);
-          textareaRef.current?.focus();
-          break;
-        case "error":
+        case "error": {
+          const isError = payload.type === "error";
           if (
             activeRunIdRef.current === null ||
             !payload.run_id ||
             activeRunIdRef.current === payload.run_id
           ) {
             activeRunIdRef.current = null;
+            setActiveRunId(null);
           }
           runEndedRef.current = true;
           setToolHint(null);
           setTaskHint(null);
           setIsReplying(false);
-          setReplyError(payload.message || UI_COPY.requestFailed);
-          textareaRef.current?.focus();
+          setCancelling(false);
+          if (isError) {
+            setReplyError(payload.message || UI_COPY.requestFailed);
+          }
+          const reopen = pendingReopenRef.current;
+          pendingReopenRef.current = null;
+          if (reopen) {
+            const userMessage: ChatMessage = {
+              id: createId(),
+              role: "user",
+              content: reopen,
+            };
+            void startRunRef.current([...messagesRef.current, userMessage]);
+            break;
+          }
+
+          // Natural completion: drain queue head as the next user turn.
+          const finishedOk =
+            payload.type === "run.finished" && payload.reason !== "cancelled";
+          const next = finishedOk ? pendingQueueRef.current[0] : undefined;
+          if (next) {
+            setPendingQueue((prev) => prev.filter((item) => item.id !== next.id));
+            const userMessage: ChatMessage = {
+              id: createId(),
+              role: "user",
+              content: next.content,
+            };
+            void startRunRef.current([...messagesRef.current, userMessage]);
+          } else {
+            textareaRef.current?.focus();
+          }
           break;
+        }
         default:
           break;
       }
@@ -336,18 +419,75 @@ export function AgentChat() {
     };
   }, []);
 
+  async function startRunWithMessages(nextMessages: ChatMessage[]) {
+    setMessages(nextMessages);
+    setReplyError(null);
+    setToolHint(null);
+    setTaskHint(null);
+    setIsReplying(true);
+    stickToBottomRef.current = true;
+    if (!plan_mode) {
+      setTodos([]);
+    }
+    activeRunIdRef.current = null;
+    setActiveRunId(null);
+    runEndedRef.current = false;
+
+    try {
+      const { run_id } = await invoke<{ run_id: string }>("start_run", {
+        messages: toWireMessages(nextMessages),
+        plan_mode,
+        subagents,
+      });
+      if (run_id && !runEndedRef.current) {
+        activeRunIdRef.current = run_id;
+        setActiveRunId(run_id);
+      }
+    } catch (err) {
+      activeRunIdRef.current = null;
+      setActiveRunId(null);
+      runEndedRef.current = true;
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : UI_COPY.startFailed;
+      setIsReplying(false);
+      setReplyError(message);
+      textareaRef.current?.focus();
+    }
+  }
+
+  startRunRef.current = startRunWithMessages;
+
   async function sendMessage(content: string) {
     const trimmed = content.trim();
-    if (!trimmed || isReplying) return;
+    if (!trimmed) return;
+
+    const runId = activeRunIdRef.current;
+    if (isReplying && runId) {
+      if (cancelling) return;
+      setPendingQueue((prev) => [
+        ...prev,
+        { id: createId(), content: trimmed },
+      ]);
+      setDraft("");
+      setReplyError(null);
+      return;
+    }
+
+    if (isReplying) {
+      setReplyError(UI_COPY.queueWaitingRun);
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
       content: trimmed,
     };
-
-    const nextMessages = [...messages, userMessage];
-    await startRunWithMessages(nextMessages);
+    await startRunWithMessages([...messages, userMessage]);
     setDraft("");
   }
 
@@ -362,45 +502,7 @@ export function AgentChat() {
       role: "user",
       content: trimmed,
     };
-    const nextMessages = [...messages.slice(0, index), userMessage];
-    await startRunWithMessages(nextMessages);
-  }
-
-  async function startRunWithMessages(nextMessages: ChatMessage[]) {
-    setMessages(nextMessages);
-    setReplyError(null);
-    setToolHint(null);
-    setTaskHint(null);
-    setIsReplying(true);
-    stickToBottomRef.current = true;
-    if (!plan_mode) {
-      setTodos([]);
-    }
-    activeRunIdRef.current = null;
-    runEndedRef.current = false;
-
-    try {
-      const { run_id } = await invoke<{ run_id: string }>("start_run", {
-        messages: toWireMessages(nextMessages),
-        plan_mode,
-        subagents,
-      });
-      if (run_id && !runEndedRef.current) {
-        activeRunIdRef.current = run_id;
-      }
-    } catch (err) {
-      activeRunIdRef.current = null;
-      runEndedRef.current = true;
-      const message =
-        err instanceof Error
-          ? err.message
-          : typeof err === "string"
-            ? err
-            : UI_COPY.startFailed;
-      setIsReplying(false);
-      setReplyError(message);
-      textareaRef.current?.focus();
-    }
+    await startRunWithMessages([...messages.slice(0, index), userMessage]);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -408,12 +510,112 @@ export function AgentChat() {
     void sendMessage(draft);
   }
 
+  async function handleCancel() {
+    const runId = activeRunIdRef.current;
+    if (!runId || cancelling || !isReplying) return;
+    pendingReopenRef.current = null;
+    setCancelling(true);
+    setReplyError(null);
+    try {
+      await invoke("cancel_run", { run_id: runId });
+    } catch (err) {
+      setCancelling(false);
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : UI_COPY.cancelFailed;
+      setReplyError(message);
+      textareaRef.current?.focus();
+    }
+  }
+
+  async function handleInterruptFirst() {
+    const first = pendingQueue[0];
+    if (!first || cancelling) return;
+
+    setPendingQueue((prev) => prev.filter((item) => item.id !== first.id));
+    setReplyError(null);
+
+    const runId = activeRunIdRef.current;
+    if (isReplying && runId) {
+      pendingReopenRef.current = first.content;
+      setCancelling(true);
+      try {
+        await invoke("cancel_run", { run_id: runId });
+      } catch (err) {
+        pendingReopenRef.current = null;
+        setCancelling(false);
+        setPendingQueue((prev) => [first, ...prev]);
+        const message =
+          err instanceof Error
+            ? err.message
+            : typeof err === "string"
+              ? err
+              : UI_COPY.interruptFailed;
+        setReplyError(message);
+        textareaRef.current?.focus();
+      }
+      return;
+    }
+
+    const userMessage: ChatMessage = {
+      id: createId(),
+      role: "user",
+      content: first.content,
+    };
+    await startRunWithMessages([...messages, userMessage]);
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Escape" && canCancel) {
+      event.preventDefault();
+      void handleCancel();
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage(draft);
     }
   }
+
+  useEffect(() => {
+    if (isReplying || cancelling) setAttachOpen(false);
+  }, [isReplying, cancelling]);
+
+  const attachButton = (
+    <ComposerAttachButton
+      open={attachOpen}
+      active={plan_mode || subagents}
+      disabled={isReplying || cancelling}
+      onOpenChange={setAttachOpen}
+    />
+  );
+
+  const sendOrCancel = canCancel ? (
+    <Button
+      type="button"
+      size="icon-xs"
+      disabled={cancelling}
+      onClick={() => void handleCancel()}
+      aria-label={UI_COPY.ariaCancel}
+      title={UI_COPY.cancelTitle}
+      className="size-7 shrink-0 rounded-full"
+    >
+      <Square className="size-2.5 fill-current" aria-hidden />
+    </Button>
+  ) : (
+    <Button
+      type="submit"
+      size="icon-xs"
+      disabled={!canSend}
+      aria-label={UI_COPY.ariaSend}
+      className="size-7 shrink-0 rounded-full"
+    >
+      <ArrowUp className="size-3.5" data-icon="inline-start" />
+    </Button>
+  );
 
   return (
     <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -425,7 +627,6 @@ export function AgentChat() {
         <div className="animate-soft-pulse absolute left-1/2 top-[18%] h-40 w-40 -translate-x-1/2 rounded-full bg-foreground/[0.04] blur-3xl" />
       </div>
 
-      {/* Parent scrollport — scrollbar on the shell, composer floats above content only. */}
       <div className="chat-frame">
         <div ref={scrollRef} className="chat-shell">
           <main
@@ -508,75 +709,62 @@ export function AgentChat() {
             className="chat-column pointer-events-auto mx-auto w-full animate-fade-rise pb-6"
             style={{ animationDelay: "80ms" }}
           >
-          <div
-            className={cn(
-              COMPOSER_SHELL,
-              "p-2 transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.2_0_0_/_0.28)]",
-            )}
-          >
-            <Textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={UI_COPY.placeholder}
-              rows={1}
-              disabled={isReplying}
-              aria-label={UI_COPY.ariaInput}
-              className="min-h-12 border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:border-transparent focus-visible:ring-0"
+            <PendingQueue
+              items={pendingQueue}
+              interruptDisabled={!canInterruptFirst}
+              onInterruptFirst={() => {
+                void handleInterruptFirst();
+              }}
+              onRemove={(id) => {
+                setPendingQueue((prev) => prev.filter((item) => item.id !== id));
+              }}
             />
-            <div className="flex flex-nowrap items-center justify-between gap-3 px-1.5 pb-1 pt-0.5">
-              <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => set_plan_mode((v) => !v)}
-                  disabled={isReplying}
-                  aria-pressed={plan_mode}
-                  title={UI_COPY.planTitle}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2 py-1 text-[11px] transition-colors",
-                    plan_mode
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-transparent text-muted-foreground hover:bg-muted/60",
-                    isReplying && "opacity-50",
-                  )}
-                >
-                  <ListTodo className="size-3.5" aria-hidden />
-                  {UI_COPY.planButton}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSubagents((v) => !v)}
-                  disabled={isReplying}
-                  aria-pressed={subagents}
-                  title={UI_COPY.subagentsTitle}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2 py-1 text-[11px] transition-colors",
-                    subagents
-                      ? "border-primary/40 bg-primary/10 text-primary"
-                      : "border-transparent text-muted-foreground hover:bg-muted/60",
-                    isReplying && "opacity-50",
-                  )}
-                >
-                  <Bot className="size-3.5" aria-hidden />
-                  {UI_COPY.subagentsButton}
-                </button>
-                <p className="truncate whitespace-nowrap text-[11px] text-muted-foreground">
-                  {UI_COPY.enterHint}
-                </p>
-              </div>
-              <Button
-                type="submit"
-                size="icon-sm"
-                disabled={!canSend}
-                aria-label={UI_COPY.ariaSend}
-                className="rounded-2xl"
-              >
-                <ArrowUp data-icon="inline-start" />
-              </Button>
+            <div
+              className={cn(
+                COMPOSER_SHELL,
+                "relative transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.2_0_0_/_0.28)]",
+                composerTall
+                  ? "flex flex-col rounded-xl"
+                  : "flex items-center gap-1.5 rounded-full p-1.5 pl-2",
+              )}
+            >
+              <ComposerAttachPanel
+                open={attachOpen}
+                planMode={plan_mode}
+                subagents={subagents}
+                onOpenChange={setAttachOpen}
+                onTogglePlan={() => set_plan_mode((v) => !v)}
+                onToggleSubagents={() => setSubagents((v) => !v)}
+              />
+              {!composerTall ? attachButton : null}
+              <Textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  canEnqueue ? UI_COPY.placeholderQueue : UI_COPY.placeholder
+                }
+                rows={1}
+                disabled={cancelling || (isReplying && !activeRunId)}
+                aria-label={UI_COPY.ariaInput}
+                className={cn(
+                  "max-h-48 resize-none border-0 bg-transparent text-sm shadow-none field-sizing-fixed focus-visible:border-transparent focus-visible:ring-0",
+                  composerTall
+                    ? "min-h-7 w-full overflow-y-auto px-3.5 pt-3.5 pb-2 leading-snug"
+                    : "h-7 min-h-7 flex-1 overflow-y-hidden px-1.5 py-0 leading-7",
+                )}
+              />
+              {composerTall ? (
+                <div className="flex items-center gap-1.5 px-2 pb-2 pt-0.5">
+                  {attachButton}
+                  <div className="ml-auto shrink-0">{sendOrCancel}</div>
+                </div>
+              ) : (
+                sendOrCancel
+              )}
             </div>
-          </div>
-        </form>
+          </form>
         </div>
       </div>
     </div>

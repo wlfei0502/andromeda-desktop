@@ -2,8 +2,8 @@ mod cloud;
 mod config;
 
 pub use cloud::{
-    cancel_run, parse_sse_block, push_sse_line, start_run, ChatWireMessage, ParseError,
-    SseEvent, SseParseState, StartRunResponse,
+    cancel_run, parse_sse_block, push_sse_line, start_run, ChatWireMessage, ParseError, SseEvent,
+    SseParseState, StartRunResponse,
 };
 pub use config::DesktopConfig;
 

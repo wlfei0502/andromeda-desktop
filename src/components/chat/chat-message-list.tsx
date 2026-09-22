@@ -6,7 +6,7 @@ import type { ChatMessage } from "./types";
 
 /** Shared shell with the bottom composer so widths and chrome match. */
 export const COMPOSER_SHELL =
-  "rounded-3xl border border-border/80 bg-background shadow-[0_10px_40px_-20px_oklch(0.45_0.05_210_/_0.35)]";
+  "rounded-2xl border border-border/80 bg-card shadow-[0_10px_40px_-22px_oklch(0.2_0_0_/_0.28)]";
 
 type ChatMessageListProps = {
   messages: ChatMessage[];
@@ -76,7 +76,7 @@ function UserMessageBubble({
         COMPOSER_SHELL,
         "overflow-hidden px-3 py-2.5 transition-[box-shadow,border-color]",
         focused
-          ? "border-ring/50 shadow-[0_12px_44px_-18px_oklch(0.5_0.07_185_/_0.4)]"
+          ? "border-ring/50 shadow-[0_12px_44px_-18px_oklch(0.2_0_0_/_0.28)]"
           : "cursor-pointer",
       )}
     >

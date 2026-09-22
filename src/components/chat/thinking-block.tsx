@@ -42,7 +42,7 @@ export function ThinkingBlock({
   return (
     <div
       className={cn(
-        "mb-2.5 rounded-xl border border-border/60 bg-muted/40 text-muted-foreground",
+        "mb-2.5 rounded-lg border border-border/60 bg-muted/40 text-muted-foreground",
         className,
       )}
     >

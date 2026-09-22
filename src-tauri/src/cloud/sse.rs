@@ -2,14 +2,12 @@ use crate::cloud::wire::SseEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
-    MissingData,
     InvalidJson(String),
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::MissingData => write!(f, "SSE block missing data line"),
             ParseError::InvalidJson(msg) => write!(f, "invalid SSE JSON: {msg}"),
         }
     }
@@ -21,6 +19,7 @@ fn is_known_sse_type(type_name: &str) -> bool {
     matches!(
         type_name,
         "run.started"
+            | "run.resumed"
             | "message.delta"
             | "reasoning.delta"
             | "message.completed"
@@ -57,8 +56,9 @@ pub fn parse_sse_block(block: &str) -> Result<Option<SseEvent>, ParseError> {
         // `event:` / `id:` / `retry:` ignored — type comes from JSON `type` field
     }
 
+    // Comment-only / keepalive frames (e.g. Axum `KeepAlive`) have no `data:` line.
     if data_lines.is_empty() {
-        return Err(ParseError::MissingData);
+        return Ok(None);
     }
 
     let data = data_lines.join("\n");
@@ -123,6 +123,24 @@ mod tests {
         match ev {
             SseEvent::MessageDelta { delta, .. } => assert_eq!(delta, "你"),
             _ => panic!("expected MessageDelta"),
+        }
+    }
+
+    #[test]
+    fn parses_run_resumed_block() {
+        let block = "data: {\"type\":\"run.resumed\",\"run_id\":\"r1\",\"revision\":2,\"status\":\"waiting_tool\"}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::RunResumed {
+                run_id,
+                revision,
+                status,
+            } => {
+                assert_eq!(run_id, "r1");
+                assert_eq!(revision, 2);
+                assert_eq!(status, "waiting_tool");
+            }
+            _ => panic!("expected RunResumed"),
         }
     }
 
@@ -288,11 +306,24 @@ mod tests {
     }
 
     #[test]
-    fn missing_data_is_error() {
+    fn comment_only_keepalive_is_ignored() {
+        let block = ": keep-alive\n\n";
+        assert!(parse_sse_block(block).unwrap().is_none());
+    }
+
+    #[test]
+    fn event_line_without_data_is_ignored() {
         let block = "event: message.delta\n\n";
+        assert!(parse_sse_block(block).unwrap().is_none());
+    }
+
+    #[test]
+    fn blank_data_lines_still_need_json() {
+        // A `data:` line that is empty is present but not valid JSON for our wire.
+        let block = "data:\n\n";
         assert!(matches!(
             parse_sse_block(block),
-            Err(ParseError::MissingData)
+            Err(ParseError::InvalidJson(_))
         ));
     }
 

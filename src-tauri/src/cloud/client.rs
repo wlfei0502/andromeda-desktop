@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -8,6 +10,7 @@ use crate::cloud::wire::{ChatWireMessage, RunOptions, SseEvent};
 use crate::config::DesktopConfig;
 
 const SSE_CHANNEL: &str = "agent://sse";
+const MAX_RESUME_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartRunResponse {
@@ -21,6 +24,36 @@ struct CreateRunRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
     options: RunOptions,
+}
+
+#[derive(Debug, Clone)]
+struct PendingToolPost {
+    tool_call_id: String,
+    content: String,
+    is_error: bool,
+}
+
+#[derive(Debug)]
+enum StreamOutcome {
+    /// `run.finished` or `error` was emitted.
+    Terminal,
+    /// Connection dropped; caller should `GET .../events`.
+    Dropped,
+    /// `tool_results` hit `409 not_owner`; takeover via events then retry POST.
+    NeedTakeover { pending: PendingToolPost },
+}
+
+#[derive(Debug)]
+enum BlockResult {
+    Continue,
+    Terminal,
+    NeedTakeover { pending: PendingToolPost },
+}
+
+#[derive(Debug)]
+enum HttpPostError {
+    NotOwner,
+    Other(String),
 }
 
 fn emit_sse(app: &AppHandle, event: &SseEvent) {
@@ -42,6 +75,19 @@ fn emit_error(app: &AppHandle, run_id: &str, message: impl Into<String>) {
 
 fn base_url(config: &DesktopConfig) -> String {
     config.cloud_base_url.trim_end_matches('/').to_string()
+}
+
+fn response_code_is_not_owner(status: reqwest::StatusCode, body: &str) -> bool {
+    if status != reqwest::StatusCode::CONFLICT {
+        return false;
+    }
+    if body.contains("not_owner") {
+        return true;
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(|s| s == "not_owner"))
+        .unwrap_or(false)
 }
 
 /// POST `/v1/runs`, return `X-Run-Id` when present, spawn SSE reader that emits on `agent://sse`.
@@ -112,10 +158,123 @@ pub async fn start_run(
     let run_id_for_stream = run_id.clone();
     let cloud_base = base_url(&config);
     tauri::async_runtime::spawn(async move {
-        consume_sse_stream(app_stream, resp, run_id_for_stream, cloud_base).await;
+        run_sse_lifecycle(app_stream, Some(resp), run_id_for_stream, cloud_base, None).await;
     });
 
     Ok(StartRunResponse { run_id })
+}
+
+async fn open_events_stream(
+    cloud_base: &str,
+    run_id: &str,
+) -> Result<reqwest::Response, String> {
+    let url = format!("{cloud_base}/v1/runs/{run_id}/events");
+    eprintln!("resume SSE GET {url}");
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .map_err(|e| format!("events request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(if body.is_empty() {
+            format!("events HTTP {status}")
+        } else {
+            format!("events HTTP {status}: {body}")
+        });
+    }
+    Ok(resp)
+}
+
+async fn run_sse_lifecycle(
+    app: AppHandle,
+    mut initial: Option<reqwest::Response>,
+    run_id: String,
+    cloud_base: String,
+    mut pending_post: Option<PendingToolPost>,
+) {
+    let mut resumes: u32 = 0;
+    let mut completed_tools: HashSet<String> = HashSet::new();
+
+    loop {
+        let resp = if let Some(r) = initial.take() {
+            r
+        } else {
+            if run_id.is_empty() {
+                emit_error(&app, "", "SSE dropped before run_id was known");
+                return;
+            }
+            if resumes >= MAX_RESUME_ATTEMPTS {
+                emit_error(
+                    &app,
+                    &run_id,
+                    format!("SSE resume failed after {MAX_RESUME_ATTEMPTS} attempts"),
+                );
+                return;
+            }
+            resumes += 1;
+            match open_events_stream(&cloud_base, &run_id).await {
+                Ok(r) => r,
+                Err(err) => {
+                    emit_error(&app, &run_id, err);
+                    return;
+                }
+            }
+        };
+
+        // After takeover (`GET .../events`), retry any tool_results that hit not_owner.
+        if let Some(pending) = pending_post.take() {
+            match post_tool_result(
+                &cloud_base,
+                &run_id,
+                &pending.tool_call_id,
+                &pending.content,
+                pending.is_error,
+            )
+            .await
+            {
+                Ok(()) => {
+                    completed_tools.insert(pending.tool_call_id);
+                }
+                Err(HttpPostError::NotOwner) => {
+                    pending_post = Some(pending);
+                    // Drop this response and try events again.
+                    continue;
+                }
+                Err(HttpPostError::Other(err)) => {
+                    emit_error(&app, &run_id, err);
+                    return;
+                }
+            }
+        }
+
+        match consume_one_sse_stream(
+            &app,
+            resp,
+            &run_id,
+            &cloud_base,
+            &mut completed_tools,
+        )
+        .await
+        {
+            StreamOutcome::Terminal => return,
+            StreamOutcome::Dropped => {
+                eprintln!("SSE dropped run={run_id}; will resume via GET .../events");
+                continue;
+            }
+            StreamOutcome::NeedTakeover { pending } => {
+                eprintln!(
+                    "tool_results not_owner run={run_id} tool={}; takeover via events",
+                    pending.tool_call_id
+                );
+                pending_post = Some(pending);
+                continue;
+            }
+        }
+    }
 }
 
 /// Accumulates SSE byte chunks and yields complete lines without splitting UTF-8.
@@ -174,12 +333,13 @@ fn is_terminal_sse_event(event: &SseEvent) -> bool {
     matches!(event, SseEvent::RunFinished { .. } | SseEvent::Error { .. })
 }
 
-async fn consume_sse_stream(
-    app: AppHandle,
+async fn consume_one_sse_stream(
+    app: &AppHandle,
     resp: reqwest::Response,
-    run_id: String,
-    cloud_base: String,
-) {
+    run_id: &str,
+    cloud_base: &str,
+    completed_tools: &mut HashSet<String>,
+) -> StreamOutcome {
     let mut state = SseParseState::new();
     let mut line_buf = SseUtf8LineBuffer::new();
     let mut stream = resp.bytes_stream();
@@ -189,50 +349,65 @@ async fn consume_sse_stream(
         let bytes = match item {
             Ok(b) => b,
             Err(e) => {
-                emit_error(&app, &run_id, format!("SSE stream error: {e}"));
-                return;
+                eprintln!("SSE stream error run={run_id}: {e}; treating as drop");
+                return StreamOutcome::Dropped;
             }
         };
 
         for line in line_buf.push(&bytes) {
-            if handle_sse_line(&app, &mut state, &line, &run_id, &cloud_base).await {
-                saw_terminal = true;
+            match handle_sse_line(app, &mut state, &line, run_id, cloud_base, completed_tools)
+                .await
+            {
+                BlockResult::Continue => {}
+                BlockResult::Terminal => {
+                    return StreamOutcome::Terminal;
+                }
+                BlockResult::NeedTakeover { pending } => {
+                    return StreamOutcome::NeedTakeover { pending };
+                }
             }
         }
     }
 
     // Flush a trailing block if the stream closed without a final blank line.
     if let Some(block) = push_sse_line(&mut state, "") {
-        if handle_sse_block(&app, &block, &run_id, &cloud_base).await {
-            saw_terminal = true;
+        match handle_sse_block(app, &block, run_id, cloud_base, completed_tools).await {
+            BlockResult::Continue => {}
+            BlockResult::Terminal => saw_terminal = true,
+            BlockResult::NeedTakeover { pending } => {
+                return StreamOutcome::NeedTakeover { pending };
+            }
         }
     }
 
-    if !saw_terminal {
-        emit_error(
-            &app,
-            &run_id,
-            "SSE stream ended without run.finished or error",
-        );
+    if saw_terminal {
+        StreamOutcome::Terminal
+    } else {
+        StreamOutcome::Dropped
     }
 }
 
-/// Returns true if a terminal event (`run.finished` / `error`) was emitted.
 async fn handle_sse_line(
     app: &AppHandle,
     state: &mut SseParseState,
     line: &str,
     run_id: &str,
     cloud_base: &str,
-) -> bool {
+    completed_tools: &mut HashSet<String>,
+) -> BlockResult {
     if let Some(block) = push_sse_line(state, line) {
-        return handle_sse_block(app, &block, run_id, cloud_base).await;
+        return handle_sse_block(app, &block, run_id, cloud_base, completed_tools).await;
     }
-    false
+    BlockResult::Continue
 }
 
-/// Returns true if a terminal event (`run.finished` / `error`) was emitted.
-async fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str, cloud_base: &str) -> bool {
+async fn handle_sse_block(
+    app: &AppHandle,
+    block: &str,
+    run_id: &str,
+    cloud_base: &str,
+    completed_tools: &mut HashSet<String>,
+) -> BlockResult {
     match parse_sse_block(block) {
         Ok(Some(event)) => {
             if let SseEvent::ToolRequest {
@@ -244,49 +419,63 @@ async fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str, cloud_base
             } = &event
             {
                 emit_sse(app, &event);
+                if completed_tools.contains(tool_call_id) {
+                    eprintln!(
+                        "skip already-posted tool_call_id={tool_call_id} (resume re-emit)"
+                    );
+                    return BlockResult::Continue;
+                }
                 let target_run = if tool_run_id.is_empty() {
                     run_id
                 } else {
                     tool_run_id.as_str()
                 };
-                match execute_tool(name, arguments).await {
-                    Ok(content) => {
-                        if let Err(err) =
-                            post_tool_result(cloud_base, target_run, tool_call_id, &content, false)
-                                .await
-                        {
-                            emit_error(app, target_run, err);
-                            return true;
-                        }
+                let (content, is_error) = match execute_tool(name, arguments).await {
+                    Ok(content) => (content, false),
+                    Err(err) => (err, true),
+                };
+                match post_tool_result(
+                    cloud_base,
+                    target_run,
+                    tool_call_id,
+                    &content,
+                    is_error,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        completed_tools.insert(tool_call_id.clone());
+                        BlockResult::Continue
                     }
-                    Err(err) => {
-                        if let Err(post_err) = post_tool_result(
-                            cloud_base,
-                            target_run,
-                            tool_call_id,
-                            &err,
-                            true,
-                        )
-                        .await
-                        {
-                            emit_error(app, target_run, post_err);
-                            return true;
-                        }
+                    Err(HttpPostError::NotOwner) => BlockResult::NeedTakeover {
+                        pending: PendingToolPost {
+                            tool_call_id: tool_call_id.clone(),
+                            content,
+                            is_error,
+                        },
+                    },
+                    Err(HttpPostError::Other(err)) => {
+                        emit_error(app, target_run, err);
+                        BlockResult::Terminal
                     }
                 }
-                return false;
+            } else {
+                let terminal = is_terminal_sse_event(&event);
+                emit_sse(app, &event);
+                if terminal {
+                    BlockResult::Terminal
+                } else {
+                    BlockResult::Continue
+                }
             }
-            let terminal = is_terminal_sse_event(&event);
-            emit_sse(app, &event);
-            terminal
         }
         Ok(None) => {
             eprintln!("warn: ignored SSE block (unknown type)");
-            false
+            BlockResult::Continue
         }
         Err(e) => {
             emit_error(app, run_id, format!("SSE parse error: {e}"));
-            true
+            BlockResult::Terminal
         }
     }
 }
@@ -297,7 +486,7 @@ async fn post_tool_result(
     tool_call_id: &str,
     content: &str,
     is_error: bool,
-) -> Result<(), String> {
+) -> Result<(), HttpPostError> {
     let url = format!("{cloud_base}/v1/runs/{run_id}/tool_results");
     let client = reqwest::Client::new();
     let resp = client
@@ -309,18 +498,21 @@ async fn post_tool_result(
         }))
         .send()
         .await
-        .map_err(|e| format!("tool_results request failed: {e}"))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(if body.is_empty() {
-            format!("tool_results HTTP {status}")
-        } else {
-            format!("tool_results HTTP {status}: {body}")
-        });
+        .map_err(|e| HttpPostError::Other(format!("tool_results request failed: {e}")))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if status.is_success() {
+        eprintln!("tool_results ok run={run_id} tool_call_id={tool_call_id} is_error={is_error}");
+        return Ok(());
     }
-    eprintln!("tool_results ok run={run_id} tool_call_id={tool_call_id} is_error={is_error}");
-    Ok(())
+    if response_code_is_not_owner(status, &body) {
+        return Err(HttpPostError::NotOwner);
+    }
+    Err(HttpPostError::Other(if body.is_empty() {
+        format!("tool_results HTTP {status}")
+    } else {
+        format!("tool_results HTTP {status}: {body}")
+    }))
 }
 
 /// POST `/v1/runs/{id}/cancel`.
@@ -355,7 +547,7 @@ pub async fn cancel_run(run_id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::SseUtf8LineBuffer;
+    use super::{response_code_is_not_owner, SseUtf8LineBuffer};
 
     #[test]
     fn utf8_line_buffer_splits_chinese_across_chunks() {
@@ -371,5 +563,21 @@ mod tests {
         let mut buf = SseUtf8LineBuffer::new();
         assert!(buf.push(b"data: hello").is_empty());
         assert_eq!(buf.push(b" world\n"), vec!["data: hello world".to_string()]);
+    }
+
+    #[test]
+    fn detects_not_owner_conflict() {
+        assert!(response_code_is_not_owner(
+            reqwest::StatusCode::CONFLICT,
+            r#"{"code":"not_owner"}"#
+        ));
+        assert!(!response_code_is_not_owner(
+            reqwest::StatusCode::CONFLICT,
+            r#"{"code":"other"}"#
+        ));
+        assert!(!response_code_is_not_owner(
+            reqwest::StatusCode::NOT_FOUND,
+            r#"{"code":"not_owner"}"#
+        ));
     }
 }
