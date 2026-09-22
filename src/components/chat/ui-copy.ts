@@ -11,6 +11,13 @@ export const UI_COPY = {
     "\u5f00\u542f\u540e\u663e\u793a\u7ed3\u6784\u5316\u4efb\u52a1\u8ba1\u5212\uff08Plan Mode\uff09",
   planButton: "\u4efb\u52a1\u8ba1\u5212",
   planWaiting: "\u7b49\u5f85\u4efb\u52a1\u8ba1\u5212\u2026",
+  subagentsTitle:
+    "\u5141\u8bb8\u4e91\u7aef\u62c9\u8d77\u5b50\u4ee3\u7406\uff08options.subagents\uff09",
+  subagentsButton: "\u5b50\u4ee3\u7406",
+  taskRunning: "\u5b50\u4ee3\u7406\u8fd0\u884c\u4e2d",
+  taskDone: "\u5b50\u4ee3\u7406\u5b8c\u6210",
+  taskFailed: "\u5b50\u4ee3\u7406\u5931\u8d25",
+  taskTimedOut: "\u5b50\u4ee3\u7406\u8d85\u65f6",
   enterHint: "Enter \u53d1\u9001 \u00b7 Shift+Enter \u6362\u884c",
   ariaSend: "\u53d1\u9001\u6d88\u606f",
   thinking: "\u601d\u8003\u4e2d\u2026",

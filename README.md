@@ -4,11 +4,13 @@ This template should help get you started developing with Tauri, React and Types
 
 ## Recommended IDE Setup
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-analyzer.rust-analyzer)
 
 ## 如何联调（云端 + 桌面）
 
 桌面通过 `config.toml` 的 `cloud_base_url` 连接本地云端 `andromeda`（默认 `http://127.0.0.1:8082`）。请保证云端 `listen` 与该 URL 一致。
+
+云端对接细节见 andromeda 仓库的 `docs/desktop-integration.md` / `docs/api-client.md`。
 
 ### 1. 启动云端
 
@@ -26,11 +28,15 @@ cargo run
 ```toml
 cloud_base_url = "http://127.0.0.1:8082"
 # default_plan_mode = false
+# default_subagents = false
 ```
 
 缺失时回退默认 `http://127.0.0.1:8082`。
 
-输入框旁可点 **任务计划** 开启 Plan Mode：请求会带 `options.plan_mode=true`，云端推送 `todos.updated` 时桌面显示待办列表。
+输入框旁可点：
+
+- **任务计划**：`options.plan_mode=true`，云端推送 `todos.updated` 时显示待办
+- **子代理**：`options.subagents=true`，云端可拉起子代理并推送 `task.*`；本地 tool（如天气）已标 `readonly: true` 供 explore 过滤
 
 ### 3. 启动桌面
 
@@ -44,3 +50,5 @@ npm run tauri dev
 - [ ] 发送「你好」→ 流式出现回复 → 结束后定稿
 - [ ] 云端未启动时，UI 报错且不永久卡在「正在思考…」
 - [ ] 连续两轮对话均成功
+- [ ] Plan Mode：待办列表随 `todos.updated` 更新
+- [ ] 子代理：开启后能看到 `task.started/completed` 提示；子代理 tool 仍回传到父 run

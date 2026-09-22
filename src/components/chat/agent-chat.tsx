@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, ListTodo } from "lucide-react";
+import { ArrowUp, Bot, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -134,7 +134,9 @@ export function AgentChat() {
   const [isReplying, setIsReplying] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [toolHint, setToolHint] = useState<string | null>(null);
+  const [taskHint, setTaskHint] = useState<string | null>(null);
   const [plan_mode, set_plan_mode] = useState(false);
+  const [subagents, setSubagents] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -149,10 +151,16 @@ export function AgentChat() {
   const canSend = draft.trim().length > 0 && !isReplying;
 
   useEffect(() => {
-    void invoke<{ default_plan_mode?: boolean }>("get_cloud_config")
+    void invoke<{
+      default_plan_mode?: boolean;
+      default_subagents?: boolean;
+    }>("get_cloud_config")
       .then((cfg) => {
         if (cfg?.default_plan_mode) {
           set_plan_mode(true);
+        }
+        if (cfg?.default_subagents) {
+          setSubagents(true);
         }
       })
       .catch(() => {
@@ -209,7 +217,7 @@ export function AgentChat() {
     const shell = scrollRef.current;
     if (!shell) return;
     shell.scrollTo({ top: shell.scrollHeight, behavior: "smooth" });
-  }, [messages, isReplying, replyError, todos, composerPad]);
+  }, [messages, isReplying, replyError, todos, toolHint, taskHint, composerPad]);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,15 +263,37 @@ export function AgentChat() {
             typeof payload.arguments.city === "string"
               ? payload.arguments.city
               : "";
+          const base = city
+            ? `${UI_COPY.weatherQuery}\uff1a${city}`
+            : UI_COPY.weatherQuery;
           setToolHint(
-            city
-              ? `${UI_COPY.weatherQuery}\uff1a${city}`
-              : UI_COPY.weatherQuery,
+            payload.agent_id
+              ? `${base} (${payload.agent_id})`
+              : base,
           );
           break;
         }
+        case "task.started":
+          setTaskHint(
+            `${UI_COPY.taskRunning}\uff1a${payload.goal} [${payload.agent}]`,
+          );
+          break;
+        case "task.completed":
+          setTaskHint(
+            `${UI_COPY.taskDone}\uff1a${payload.summary || payload.task_id}`,
+          );
+          break;
+        case "task.failed":
+          setTaskHint(
+            `${UI_COPY.taskFailed}\uff1a${payload.message || payload.task_id}`,
+          );
+          break;
+        case "task.timed_out":
+          setTaskHint(`${UI_COPY.taskTimedOut}\uff1a${payload.task_id}`);
+          break;
         case "run.finished":
           setToolHint(null);
+          setTaskHint(null);
           if (
             activeRunIdRef.current === null ||
             activeRunIdRef.current === payload.run_id
@@ -284,6 +314,7 @@ export function AgentChat() {
           }
           runEndedRef.current = true;
           setToolHint(null);
+          setTaskHint(null);
           setIsReplying(false);
           setReplyError(payload.message || UI_COPY.requestFailed);
           textareaRef.current?.focus();
@@ -339,6 +370,7 @@ export function AgentChat() {
     setMessages(nextMessages);
     setReplyError(null);
     setToolHint(null);
+    setTaskHint(null);
     setIsReplying(true);
     stickToBottomRef.current = true;
     if (!plan_mode) {
@@ -351,6 +383,7 @@ export function AgentChat() {
       const { run_id } = await invoke<{ run_id: string }>("start_run", {
         messages: toWireMessages(nextMessages),
         plan_mode,
+        subagents,
       });
       if (run_id && !runEndedRef.current) {
         activeRunIdRef.current = run_id;
@@ -388,8 +421,8 @@ export function AgentChat() {
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10"
       >
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,oklch(0.94_0.04_185)_0%,transparent_55%),radial-gradient(ellipse_at_bottom,oklch(0.95_0.03_220)_0%,transparent_50%)]" />
-        <div className="animate-soft-pulse absolute left-1/2 top-[18%] h-40 w-40 -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,oklch(0.92_0_0)_0%,transparent_55%),radial-gradient(ellipse_at_bottom,oklch(0.9_0_0)_0%,transparent_50%)]" />
+        <div className="animate-soft-pulse absolute left-1/2 top-[18%] h-40 w-40 -translate-x-1/2 rounded-full bg-foreground/[0.04] blur-3xl" />
       </div>
 
       {/* Parent scrollport — scrollbar on the shell, composer floats above content only. */}
@@ -421,6 +454,11 @@ export function AgentChat() {
                 {toolHint ? (
                   <p className="px-1 py-2 text-xs text-muted-foreground">
                     {toolHint}
+                  </p>
+                ) : null}
+                {taskHint ? (
+                  <p className="px-1 py-2 text-xs text-muted-foreground">
+                    {taskHint}
                   </p>
                 ) : null}
                 {replyError ? (
@@ -473,7 +511,7 @@ export function AgentChat() {
           <div
             className={cn(
               COMPOSER_SHELL,
-              "p-2 transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.5_0.07_185_/_0.4)]",
+              "p-2 transition-[box-shadow,border-color] focus-within:border-ring/50 focus-within:shadow-[0_12px_44px_-18px_oklch(0.2_0_0_/_0.28)]",
             )}
           >
             <Textarea
@@ -505,6 +543,23 @@ export function AgentChat() {
                 >
                   <ListTodo className="size-3.5" aria-hidden />
                   {UI_COPY.planButton}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubagents((v) => !v)}
+                  disabled={isReplying}
+                  aria-pressed={subagents}
+                  title={UI_COPY.subagentsTitle}
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-2 py-1 text-[11px] transition-colors",
+                    subagents
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-transparent text-muted-foreground hover:bg-muted/60",
+                    isReplying && "opacity-50",
+                  )}
+                >
+                  <Bot className="size-3.5" aria-hidden />
+                  {UI_COPY.subagentsButton}
                 </button>
                 <p className="truncate whitespace-nowrap text-[11px] text-muted-foreground">
                   {UI_COPY.enterHint}

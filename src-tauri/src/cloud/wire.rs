@@ -99,11 +99,43 @@ pub enum SseEvent {
         tool_call_id: String,
         name: String,
         arguments: Value,
+        /// Present when a subagent issued the tool call (LH-M5).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        /// Parent `task` tool_call_id when set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_task_id: Option<String>,
     },
     #[serde(rename = "todos.updated")]
     TodosUpdated {
         run_id: String,
         todos: Vec<TodoItem>,
+    },
+    #[serde(rename = "task.started")]
+    TaskStarted {
+        run_id: String,
+        task_id: String,
+        goal: String,
+        agent: String,
+    },
+    #[serde(rename = "task.completed")]
+    TaskCompleted {
+        run_id: String,
+        task_id: String,
+        summary: String,
+    },
+    #[serde(rename = "task.failed")]
+    TaskFailed {
+        run_id: String,
+        task_id: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
+    #[serde(rename = "task.timed_out")]
+    TaskTimedOut {
+        run_id: String,
+        task_id: String,
     },
     #[serde(rename = "run.finished")]
     RunFinished { run_id: String, reason: String },
@@ -125,6 +157,10 @@ impl SseEvent {
             SseEvent::MessageCompleted { .. } => "message.completed",
             SseEvent::ToolRequest { .. } => "tool.request",
             SseEvent::TodosUpdated { .. } => "todos.updated",
+            SseEvent::TaskStarted { .. } => "task.started",
+            SseEvent::TaskCompleted { .. } => "task.completed",
+            SseEvent::TaskFailed { .. } => "task.failed",
+            SseEvent::TaskTimedOut { .. } => "task.timed_out",
             SseEvent::RunFinished { .. } => "run.finished",
             SseEvent::Error { .. } => "error",
         }

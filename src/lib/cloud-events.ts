@@ -35,7 +35,30 @@ export type CloudSseEvent =
       tool_call_id: string;
       name: string;
       arguments: Record<string, unknown>;
+      agent_id?: string | null;
+      parent_task_id?: string | null;
     }
+  | {
+      type: "task.started";
+      run_id: string;
+      task_id: string;
+      goal: string;
+      agent: string;
+    }
+  | {
+      type: "task.completed";
+      run_id: string;
+      task_id: string;
+      summary: string;
+    }
+  | {
+      type: "task.failed";
+      run_id: string;
+      task_id: string;
+      message: string;
+      code?: string | null;
+    }
+  | { type: "task.timed_out"; run_id: string; task_id: string }
   | { type: "run.finished"; run_id: string; reason: string }
   | { type: "error"; run_id: string; message: string; code?: string };
 
@@ -54,6 +77,10 @@ export function isCloudSseEvent(value: unknown): value is CloudSseEvent {
     type === "message.completed" ||
     type === "todos.updated" ||
     type === "tool.request" ||
+    type === "task.started" ||
+    type === "task.completed" ||
+    type === "task.failed" ||
+    type === "task.timed_out" ||
     type === "run.finished" ||
     type === "error"
   );

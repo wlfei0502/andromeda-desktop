@@ -10,6 +10,7 @@ pub fn weather_tool_def() -> Value {
     json!({
         "name": GET_WEATHER,
         "description": "查询指定城市的当前天气和未来7天预报。用户询问天气、气温、降雨、风力或未来几天天气时调用。",
+        "readonly": true,
         "parameters": {
             "type": "object",
             "properties": {

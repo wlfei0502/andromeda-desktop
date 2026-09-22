@@ -16,6 +16,9 @@ pub struct DesktopConfig {
     /// Default for `start_run` when the UI does not pass `plan_mode`.
     #[serde(default)]
     pub default_plan_mode: bool,
+    /// Default for `start_run` when the UI does not pass `subagents`.
+    #[serde(default)]
+    pub default_subagents: bool,
 }
 
 impl Default for DesktopConfig {
@@ -23,6 +26,7 @@ impl Default for DesktopConfig {
         Self {
             cloud_base_url: default_cloud_base_url(),
             default_plan_mode: false,
+            default_subagents: false,
         }
     }
 }
@@ -133,6 +137,19 @@ mod tests {
         )
         .unwrap();
         assert!(cfg.default_plan_mode);
+        assert!(!cfg.default_subagents);
+    }
+
+    #[test]
+    fn parses_default_subagents() {
+        let cfg = DesktopConfig::from_toml(
+            r#"
+            cloud_base_url = "http://127.0.0.1:8082"
+            default_subagents = true
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.default_subagents);
     }
 
     #[test]

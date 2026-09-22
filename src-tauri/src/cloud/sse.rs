@@ -24,7 +24,12 @@ fn is_known_sse_type(type_name: &str) -> bool {
             | "message.delta"
             | "reasoning.delta"
             | "message.completed"
+            | "tool.request"
             | "todos.updated"
+            | "task.started"
+            | "task.completed"
+            | "task.failed"
+            | "task.timed_out"
             | "run.finished"
             | "error"
     )
@@ -173,13 +178,63 @@ mod tests {
                 name,
                 tool_call_id,
                 arguments,
+                agent_id,
+                parent_task_id,
                 ..
             } => {
                 assert_eq!(name, "get_weather");
                 assert_eq!(tool_call_id, "t1");
                 assert_eq!(arguments["city"], "北京");
+                assert!(agent_id.is_none());
+                assert!(parent_task_id.is_none());
             }
             _ => panic!("expected ToolRequest"),
+        }
+    }
+
+    #[test]
+    fn parses_tool_request_with_subagent_fields() {
+        let block = "data: {\"type\":\"tool.request\",\"run_id\":\"r1\",\"tool_call_id\":\"t1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"北京\"},\"agent_id\":\"sub-tc1\",\"parent_task_id\":\"tc1\"}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::ToolRequest {
+                agent_id,
+                parent_task_id,
+                ..
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("sub-tc1"));
+                assert_eq!(parent_task_id.as_deref(), Some("tc1"));
+            }
+            _ => panic!("expected ToolRequest"),
+        }
+    }
+
+    #[test]
+    fn parses_task_started() {
+        let block = "data: {\"type\":\"task.started\",\"run_id\":\"r1\",\"task_id\":\"tc1\",\"goal\":\"查天气\",\"agent\":\"explore\"}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::TaskStarted {
+                task_id,
+                goal,
+                agent,
+                ..
+            } => {
+                assert_eq!(task_id, "tc1");
+                assert_eq!(goal, "查天气");
+                assert_eq!(agent, "explore");
+            }
+            _ => panic!("expected TaskStarted"),
+        }
+    }
+
+    #[test]
+    fn parses_task_completed() {
+        let block = "data: {\"type\":\"task.completed\",\"run_id\":\"r1\",\"task_id\":\"tc1\",\"summary\":\"ok\"}\n\n";
+        let ev = parse_sse_block(block).unwrap().unwrap();
+        match ev {
+            SseEvent::TaskCompleted { summary, .. } => assert_eq!(summary, "ok"),
+            _ => panic!("expected TaskCompleted"),
         }
     }
 

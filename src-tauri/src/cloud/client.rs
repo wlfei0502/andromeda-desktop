@@ -50,6 +50,7 @@ pub async fn start_run(
     app: AppHandle,
     messages: Vec<ChatWireMessage>,
     plan_mode: Option<bool>,
+    subagents: Option<bool>,
 ) -> Result<StartRunResponse, String> {
     let config = DesktopConfig::load().map_err(|e| {
         emit_error(&app, "", e.clone());
@@ -57,6 +58,7 @@ pub async fn start_run(
     })?;
 
     let plan_mode = plan_mode.unwrap_or(config.default_plan_mode);
+    let subagents = subagents.unwrap_or(config.default_subagents);
     let url = format!("{}/v1/runs", base_url(&config));
     let body = CreateRunRequest {
         messages,
@@ -65,7 +67,7 @@ pub async fn start_run(
         options: RunOptions {
             persist: true,
             plan_mode,
-            subagents: false,
+            subagents,
         },
     };
 
@@ -238,6 +240,7 @@ async fn handle_sse_block(app: &AppHandle, block: &str, run_id: &str, cloud_base
                 tool_call_id,
                 name,
                 arguments,
+                ..
             } = &event
             {
                 emit_sse(app, &event);
