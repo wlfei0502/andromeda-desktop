@@ -87,11 +87,10 @@
   --chat-column-max-width: 48rem;
   --chat-composer-space: 14rem;
   --chat-scrollbar-size: 10px;
-  --panel-center-min: 480px;
+  --panel-center-min: 430px;
   --panel-left-min: 180px;
   --panel-left-max: 420px;
   --panel-right-min: 220px;
-  --panel-right-max: 520px;
 }
 
 .dark {
@@ -136,11 +135,17 @@
   html,
   body,
   #root {
-    @apply h-full overflow-x-auto;
+    @apply h-full w-full overflow-hidden bg-background;
   }
 
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply font-sans text-foreground antialiased;
+  }
+
+  html.overlay-surface,
+  body.overlay-surface,
+  body.overlay-surface #root {
+    background: transparent !important;
   }
 }
 
@@ -187,7 +192,7 @@
 }
 
 .panel-center {
-  min-width: var(--panel-center-min, 480px);
+  min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
   display: flex;
@@ -342,14 +347,26 @@ body.panel-resizing * {
   box-sizing: border-box;
 }
 
-.panel-side-left {
-  min-width: var(--panel-left-min, 180px);
-  max-width: var(--panel-left-max, 420px);
+.panel-side-left,
+.panel-side-right {
+  min-width: 0;
 }
 
-.panel-side-right {
-  min-width: var(--panel-right-min, 220px);
-  max-width: var(--panel-right-max, 520px);
+.panel-tabs-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.panel-tabs-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.local-terminal-host,
+.local-terminal-host .xterm,
+.local-terminal-host .xterm-viewport {
+  height: 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {

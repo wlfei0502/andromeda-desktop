@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Browser More</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        font: 13px/1.2 system-ui, -apple-system, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+        color: #3f3f46;
+        user-select: none;
+      }
+      #menu {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 6px;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        border-radius: 10px;
+        background: #ffffff;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      }
+      .item {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        height: 32px;
+        margin: 0;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #3f3f46;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .item:hover:not(:disabled) {
+        background: rgba(0, 0, 0, 0.05);
+        color: #18181b;
+      }
+      .item:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .item span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sep {
+        height: 1px;
+        margin: 4px 6px;
+        background: rgba(0, 0, 0, 0.08);
+      }
+      .switch {
+        position: relative;
+        flex-shrink: 0;
+        width: 28px;
+        height: 16px;
+        border-radius: 999px;
+        background: #d4d4d8;
+        transition: background 0.15s ease;
+      }
+      .switch.on {
+        background: #34c759;
+      }
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+        transition: transform 0.15s ease;
+      }
+      .switch.on::after {
+        transform: translateX(12px);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="menu" role="menu"></div>
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        var hasPage = params.get("hasPage") === "1";
+        var hasUrl = params.get("hasUrl") === "1";
+        var bookmarkBar = params.get("bookmarkBar") === "1";
+
+        var rows = [
+          { type: "action", id: "screenshot", label: "\u622a\u5c4f", enabled: hasPage },
+          { type: "sep" },
+          { type: "action", id: "hardReload", label: "\u5f3a\u5236\u5237\u65b0", enabled: hasPage },
+          {
+            type: "action",
+            id: "copyUrl",
+            label: "\u590d\u5236\u5f53\u524d\u7f51\u5740",
+            enabled: hasUrl,
+          },
+          { type: "sep" },
+          {
+            type: "toggle",
+            id: "bookmarkBar",
+            label: "\u663e\u793a\u4e66\u7b7e\u680f",
+            on: bookmarkBar,
+          },
+          { type: "sep" },
+          {
+            type: "action",
+            id: "clearHistory",
+            label: "\u6e05\u9664\u6d4f\u89c8\u5386\u53f2",
+            enabled: true,
+          },
+          {
+            type: "action",
+            id: "clearCookies",
+            label: "\u6e05\u9664 Cookie",
+            enabled: hasPage,
+          },
+          {
+            type: "action",
+            id: "clearCache",
+            label: "\u6e05\u9664\u7f13\u5b58",
+            enabled: hasPage,
+          },
+        ];
+
+        var menu = document.getElementById("menu");
+        rows.forEach(function (row) {
+          if (row.type === "sep") {
+            var sep = document.createElement("div");
+            sep.className = "sep";
+            sep.setAttribute("role", "separator");
+            menu.appendChild(sep);
+            return;
+          }
+
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "item";
+          btn.setAttribute("role", row.type === "toggle" ? "menuitemcheckbox" : "menuitem");
+          btn.dataset.id = row.id;
+
+          var label = document.createElement("span");
+          label.textContent = row.label;
+          btn.appendChild(label);
+
+          if (row.type === "toggle") {
+            btn.setAttribute("aria-checked", row.on ? "true" : "false");
+            var sw = document.createElement("span");
+            sw.className = "switch" + (row.on ? " on" : "");
+            btn.appendChild(sw);
+            btn.addEventListener("click", function () {
+              var next = btn.getAttribute("aria-checked") !== "true";
+              btn.setAttribute("aria-checked", next ? "true" : "false");
+              sw.className = "switch" + (next ? " on" : "");
+              emit("andromeda://browser-more-menu", {
+                action: "bookmarkBar",
+                value: next,
+              });
+            });
+          } else {
+            if (!row.enabled) btn.disabled = true;
+            btn.addEventListener("click", function () {
+              if (btn.disabled) return;
+              emit("andromeda://browser-more-menu", { action: row.id });
+            });
+          }
+
+          menu.appendChild(btn);
+        });
+
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            emit("andromeda://browser-more-menu-dismiss");
+          }
+        });
+
+        setTimeout(function () {
+          window.addEventListener("blur", function () {
+            emit("andromeda://browser-more-menu-dismiss");
+          });
+        }, 200);
+
+        function emit(event, payload) {
+          try {
+            if (window.__TAURI__ && window.__TAURI__.event) {
+              window.__TAURI__.event.emit(event, payload);
+              return;
+            }
+          } catch (_) {}
+          try {
+            var internals = window.__TAURI_INTERNALS__;
+            if (internals && typeof internals.invoke === "function") {
+              internals.invoke("plugin:event|emit", {
+                event: event,
+                payload: payload,
+              });
+            }
+          } catch (_) {}
+        }
+      })();
+    </script>
+  </body>
+</html>

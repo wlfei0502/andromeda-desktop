@@ -10,11 +10,14 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Andromeda",
         "width": 1280,
-        "height": 720
+        "height": 720,
+        "dragDropEnabled": true,
+        "backgroundColor": "#F6F6F6"
       }
     ],
     "security": {

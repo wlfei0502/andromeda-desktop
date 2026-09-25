@@ -1,9 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import process from "node:process";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import process from "node:process";
 
 const host = process.env.TAURI_DEV_HOST;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,8 @@ export default defineConfig(() => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind IPv4 explicitly so Tauri's localhost:1420 probe does not miss an [::1]-only listener.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
@@ -30,7 +31,17 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // File Viewer assets under public/ are large; watching them floods HMR.
+      ignored: [
+        "**/src-tauri/**",
+        "**/public/vendor/**",
+        "**/public/wasm/**",
+        "**/public/file-viewer/**",
+        "**/public/flyfish-viewer-assets.json",
+        "**/*.wasm",
+        "**/*.bcmap",
+        "**/*.pfb",
+      ],
     },
   },
 }));

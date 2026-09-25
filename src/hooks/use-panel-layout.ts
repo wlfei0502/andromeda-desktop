@@ -15,11 +15,22 @@ export const PANEL_LIMITS = {
   leftMax: 420,
   leftDefault: 260,
   rightMin: 220,
-  rightMax: 520,
   rightDefault: 320,
   /** Middle chat column — keep composer / messages from collapsing. */
-  centerMin: 480,
+  centerMin: 430,
 } as const;
+
+/** Right panel max from remaining space after centerMin (+ left if open). */
+function rightMaxFor(
+  containerWidth: number,
+  layout: Pick<PanelLayoutState, "leftOpen" | "leftWidth">,
+): number {
+  const leftSpace = layout.leftOpen ? layout.leftWidth : 0;
+  return Math.max(
+    PANEL_LIMITS.rightMin,
+    containerWidth - PANEL_LIMITS.centerMin - leftSpace,
+  );
+}
 
 const DEFAULT_LAYOUT: PanelLayoutState = {
   leftOpen: true,
@@ -45,10 +56,9 @@ function readStored(): PanelLayoutState {
         PANEL_LIMITS.leftMin,
         PANEL_LIMITS.leftMax,
       ),
-      rightWidth: clamp(
-        parsed.rightWidth ?? DEFAULT_LAYOUT.rightWidth,
+      rightWidth: Math.max(
         PANEL_LIMITS.rightMin,
-        PANEL_LIMITS.rightMax,
+        parsed.rightWidth ?? DEFAULT_LAYOUT.rightWidth,
       ),
     };
   } catch {
@@ -73,8 +83,8 @@ function centerSpace(containerWidth: number, layout: PanelLayoutState) {
 }
 
 /**
- * When the window shrinks, close side panels (right first, then left)
- * so the middle region never drops below centerMin.
+ * When the window shrinks, shrink the right panel first, then close sides
+ * (right, then left) so the middle region never drops below centerMin.
  */
 function fitLayoutToWidth(
   containerWidth: number,
@@ -86,6 +96,13 @@ function fitLayoutToWidth(
 
   let next = prev;
   if (next.rightOpen) {
+    const maxRight = rightMaxFor(containerWidth, next);
+    if (maxRight >= PANEL_LIMITS.rightMin && next.rightWidth > maxRight) {
+      next = { ...next, rightWidth: maxRight };
+      if (centerSpace(containerWidth, next) >= PANEL_LIMITS.centerMin - 0.5) {
+        return next;
+      }
+    }
     next = { ...next, rightOpen: false };
     if (centerSpace(containerWidth, next) >= PANEL_LIMITS.centerMin - 0.5) {
       return next;
@@ -131,6 +148,10 @@ export function usePanelLayout() {
 
   const reportContainerWidth = useCallback((width: number) => {
     setContainerWidth(width);
+    // Fit in the same frame as the resize observation so fixed panel widths
+    // cannot briefly overflow and flash the native window background.
+    if (forceOpenLockRef.current > 0) return;
+    setLayout((prev) => fitLayoutToWidth(width, prev));
   }, []);
 
   const forceOpenPanels = useCallback(
@@ -199,15 +220,8 @@ export function usePanelLayout() {
     (delta: number) => {
       setLayout((prev) => {
         if (!prev.rightOpen) return prev;
-        let max: number = PANEL_LIMITS.rightMax;
-        if (containerWidth != null) {
-          const leftSpace = prev.leftOpen ? prev.leftWidth : 0;
-          max = Math.min(
-            max,
-            containerWidth - PANEL_LIMITS.centerMin - leftSpace,
-          );
-          max = Math.max(PANEL_LIMITS.rightMin, max);
-        }
+        if (containerWidth == null) return prev;
+        const max = rightMaxFor(containerWidth, prev);
         const next = clamp(prev.rightWidth + delta, PANEL_LIMITS.rightMin, max);
         if (next === prev.rightWidth) return prev;
         return { ...prev, rightWidth: next };
@@ -228,17 +242,10 @@ export function usePanelLayout() {
     return Math.max(PANEL_LIMITS.leftMin, max);
   })();
 
-  const rightDragMax = (() => {
-    let max: number = PANEL_LIMITS.rightMax;
-    if (containerWidth != null) {
-      const leftSpace = layout.leftOpen ? layout.leftWidth : 0;
-      max = Math.min(
-        max,
-        containerWidth - PANEL_LIMITS.centerMin - leftSpace,
-      );
-    }
-    return Math.max(PANEL_LIMITS.rightMin, max);
-  })();
+  const rightDragMax =
+    containerWidth == null
+      ? PANEL_LIMITS.rightMin
+      : rightMaxFor(containerWidth, layout);
 
   return {
     layout,
@@ -249,5 +256,6 @@ export function usePanelLayout() {
     reportContainerWidth,
     leftDragMax,
     rightDragMax,
+    forceOpenPanels,
   };
 }

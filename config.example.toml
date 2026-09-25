@@ -1,4 +1,6 @@
 cloud_base_url = "http://127.0.0.1:8082"
+# Map child WebView — andromeda-desktop-map (`npm run dev` default :5174)
+map_url = "http://127.0.0.1:5174/"
 # When true, new runs default to Plan Mode (UI toggle can still override).
 # default_plan_mode = false
 # When true, new runs default to subagents (UI toggle can still override).

@@ -4,15 +4,23 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_CLOUD_BASE_URL: &str = "http://127.0.0.1:8082";
+const DEFAULT_MAP_URL: &str = "http://127.0.0.1:5174/";
 
 fn default_cloud_base_url() -> String {
     DEFAULT_CLOUD_BASE_URL.to_string()
+}
+
+fn default_map_url() -> String {
+    DEFAULT_MAP_URL.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopConfig {
     #[serde(default = "default_cloud_base_url")]
     pub cloud_base_url: String,
+    /// Map child WebView URL (andromeda-desktop-map Vite/dev or packaged asset later).
+    #[serde(default = "default_map_url")]
+    pub map_url: String,
     /// Default for `start_run` when the UI does not pass `plan_mode`.
     #[serde(default)]
     pub default_plan_mode: bool,
@@ -25,6 +33,7 @@ impl Default for DesktopConfig {
     fn default() -> Self {
         Self {
             cloud_base_url: default_cloud_base_url(),
+            map_url: default_map_url(),
             default_plan_mode: false,
             default_subagents: false,
         }
@@ -153,8 +162,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_map_url() {
+        let cfg = DesktopConfig::from_toml(
+            r#"
+            cloud_base_url = "http://127.0.0.1:8082"
+            map_url = "http://127.0.0.1:5174/"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.map_url, "http://127.0.0.1:5174/");
+    }
+
+    #[test]
     fn empty_toml_object_uses_default_url() {
         let cfg = DesktopConfig::from_toml("").unwrap();
         assert_eq!(cfg.cloud_base_url, DEFAULT_CLOUD_BASE_URL);
+        assert_eq!(cfg.map_url, DEFAULT_MAP_URL);
     }
 }

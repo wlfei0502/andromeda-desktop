@@ -13,10 +13,10 @@ import {
 import { cn } from "@/lib/utils";
 import { ChatMessageList, COMPOSER_SHELL } from "./chat-message-list";
 import { ComposerAttachButton, ComposerAttachPanel } from "./composer-attach-menu";
-import { PlanTodoList } from "./plan-todo-list";
 import { PendingQueue, type PendingQueueItem } from "./pending-queue";
 import { UI_COPY } from "./ui-copy";
 import type { ChatMessage, ChatRole } from "./types";
+import { usePanelTabsContext } from "@/components/layout/panel-tabs-context";
 
 const COMPOSER_LINE_H = 28;
 const COMPOSER_TALL_THRESHOLD = 40;
@@ -163,6 +163,7 @@ export function AgentChat() {
   const [composerPad, setComposerPad] = useState(200);
   const [composerTall, setComposerTall] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const { setPlan, requestPlanSurface } = usePanelTabsContext();
 
   const hasMessages = messages.length > 0;
   const canEnqueue = isReplying && !!activeRunId && !cancelling;
@@ -171,6 +172,20 @@ export function AgentChat() {
     draft.trim().length > 0 && (!isReplying || canEnqueue);
   const canInterruptFirst =
     pendingQueue.length > 0 && !cancelling && (!isReplying || !!activeRunId);
+
+  useEffect(() => {
+    setPlan({
+      todos,
+      planMode: plan_mode,
+      waiting: plan_mode && isReplying && todos.length === 0,
+    });
+  }, [todos, plan_mode, isReplying, setPlan]);
+
+  useEffect(() => {
+    if (plan_mode || todos.length > 0) {
+      requestPlanSurface();
+    }
+  }, [plan_mode, todos.length, requestPlanSurface]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -638,13 +653,6 @@ export function AgentChat() {
           >
             {hasMessages ? (
               <section className="min-w-0">
-                {plan_mode || todos.length > 0 ? (
-                  <PlanTodoList
-                    todos={todos}
-                    waiting={plan_mode && isReplying && todos.length === 0}
-                    className="mb-3"
-                  />
-                ) : null}
                 <ChatMessageList
                   messages={messages}
                   disabled={isReplying}
@@ -685,13 +693,6 @@ export function AgentChat() {
                   <p className="mt-3 text-base leading-relaxed text-muted-foreground">
                     {UI_COPY.emptyHint}
                   </p>
-                  {plan_mode ? (
-                    <PlanTodoList
-                      todos={todos}
-                      waiting={isReplying && todos.length === 0}
-                      className="mt-4 text-left"
-                    />
-                  ) : null}
                   {replyError ? (
                     <p role="alert" className="mt-3 text-xs text-destructive">
                       {replyError}

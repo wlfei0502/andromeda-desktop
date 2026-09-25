@@ -1,1 +1,4 @@
 cloud_base_url = "http://127.0.0.1:8082"
+# andromeda-desktop-map Vite (npm run dev → 5174)
+map_url = "http://127.0.0.1:5174/"
+

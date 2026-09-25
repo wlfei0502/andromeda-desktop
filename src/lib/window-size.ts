@@ -52,7 +52,26 @@ export async function syncWindowMinWidth(minWidth: number): Promise<void> {
   if (!isTauriRuntime() || minWidth <= 0) return;
   try {
     const win = getCurrentWindow();
-    await win.setSizeConstraints({ minWidth });
+    let maxWidth: number | undefined;
+    const monitor = await currentMonitor();
+    if (monitor) {
+      maxWidth = Math.floor(
+        monitor.workArea.size.toLogical(monitor.scaleFactor).width,
+      );
+    }
+    await win.setSizeConstraints({
+      minWidth,
+      ...(maxWidth != null ? { maxWidth } : {}),
+    });
+
+    // If a previous bug grew the window past the work area, pull it back.
+    if (maxWidth != null) {
+      const factor = await win.scaleFactor();
+      const logical = (await win.innerSize()).toLogical(factor);
+      if (logical.width > maxWidth + 0.5 && !(await win.isMaximized())) {
+        await win.setSize(new LogicalSize(maxWidth, logical.height));
+      }
+    }
   } catch {
     /* browser / missing permission */
   }
